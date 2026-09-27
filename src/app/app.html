@@ -1,0 +1,202 @@
+@if (store.view() === 'packs') {
+  <div data-testid="packs-view" class="mx-auto flex min-h-dvh w-full max-w-xl flex-col bg-background px-4 pb-8 text-foreground">
+    <header class="flex items-center justify-between py-4">
+      <h1 class="text-2xl font-bold lowercase tracking-wide">
+        <span class="text-red-500">f</span><span class="text-green-600">l</span><span class="text-blue-600">o</span><span class="text-yellow-500">w</span>
+      </h1>
+      <span hlmBadge variant="secondary">{{ store.dailyStreak() }} day streak</span>
+    </header>
+
+    <button
+      hlmBtn
+      variant="outline"
+      data-testid="daily-card"
+      class="mb-2 h-auto items-center justify-between px-4 py-3 text-left"
+      (click)="store.daily()"
+    >
+      <span>
+        <span class="block text-lg font-bold" style="color: #e11d48">Daily Puzzles</span>
+        <span class="block text-xs font-normal text-muted-foreground">A new board every day</span>
+      </span>
+      <span class="text-sm font-semibold tabular-nums">{{ store.dailyDoneCount() }} ★</span>
+    </button>
+
+    @for (p of store.packs; track p.id) {
+      <button
+        hlmBtn
+        variant="outline"
+        [attr.data-testid]="'pack-' + p.id"
+        class="mb-2 h-auto items-center justify-between px-4 py-3 text-left"
+        (click)="store.openPack(p)"
+      >
+        <span>
+          <span class="block text-lg font-bold" [style.color]="p.color">{{ p.name }}</span>
+          <span class="block text-xs font-normal text-muted-foreground">{{ p.desc }}</span>
+        </span>
+        <span class="text-sm font-semibold tabular-nums">{{ progress(p).done }} / {{ progress(p).total }} ★</span>
+      </button>
+    }
+
+    <button
+      hlmBtn
+      variant="ghost"
+      data-testid="free-play"
+      class="mt-2 h-auto px-4 py-3 text-left"
+      (click)="freePlay()"
+    >
+      <span>
+        <span class="block text-lg font-bold">Free play</span>
+        <span class="block text-xs font-normal text-muted-foreground">Random boards &amp; custom seeds</span>
+      </span>
+    </button>
+  </div>
+} @else if (store.view() === 'levels' && store.pack(); as pack) {
+  <div data-testid="levels-view" class="mx-auto flex min-h-dvh w-full max-w-xl flex-col bg-background px-4 pb-8 text-foreground">
+    <header class="flex items-center gap-2 py-3">
+      <button hlmBtn variant="ghost" size="icon" data-testid="back-btn" aria-label="Back to packs" (click)="store.showPacks()">
+        <ng-icon name="lucideArrowLeft" />
+      </button>
+      <div class="flex-1">
+        <h1 class="text-lg font-bold" [style.color]="pack.color">{{ pack.name }}</h1>
+        <p class="text-xs text-muted-foreground">{{ pack.desc }}</p>
+      </div>
+      <span hlmBadge variant="secondary">{{ progress(pack).done }} / {{ progress(pack).total }} ★</span>
+    </header>
+    <div class="grid grid-cols-5 gap-1.5 sm:grid-cols-6">
+      @for (n of levelRange(pack); track n) {
+        <button
+          hlmBtn
+          size="sm"
+          [attr.data-testid]="'level-' + n"
+          [variant]="stars(pack, n) > 0 ? 'default' : 'outline'"
+          [title]="stars(pack, n) > 0 ? n + ': ' + stars(pack, n) + ' stars' : '' + n"
+          (click)="store.playPackLevel(pack, n)"
+        >
+          @if (stars(pack, n) >= 3) {
+            <span>★{{ n }}</span>
+          } @else if (stars(pack, n) > 0) {
+            <span>✓{{ n }}</span>
+          } @else {
+            <span>{{ n }}</span>
+          }
+        </button>
+      }
+    </div>
+  </div>
+} @else {
+  <div class="flex h-dvh w-full flex-col bg-background text-foreground">
+    <header class="flex items-center gap-2 border-b px-2 py-2">
+      <button hlmBtn variant="ghost" size="icon" data-testid="back-btn" aria-label="Back" (click)="store.backFromGame()">
+        <ng-icon name="lucideArrowLeft" />
+      </button>
+      <button hlmBtn variant="ghost" size="icon" data-testid="menu-btn" aria-label="Menu" (click)="store.panelOpen.set(!store.panelOpen())">
+        <ng-icon name="lucideMenu" />
+      </button>
+      <div class="min-w-0 flex-1 text-center">
+        <h1 class="truncate text-sm font-bold tracking-[0.15em]">{{ store.title() }}</h1>
+        <p class="truncate text-[11px] text-muted-foreground">{{ store.subtitle() }}</p>
+      </div>
+      <div class="flex items-center gap-1">
+        <span hlmBadge variant="secondary" data-testid="moves-badge">Moves {{ store.moves() }}</span>
+        <span hlmBadge variant="secondary" data-testid="linked-badge">{{ store.linked() }}</span>
+      </div>
+    </header>
+
+    <div class="flex min-h-0 flex-1 flex-col md:flex-row">
+      <main class="flex min-h-0 flex-1 flex-col bg-black">
+        <flow-board class="flex min-h-0 flex-1 flex-col" />
+      </main>
+      <aside class="flex flex-col gap-2 overflow-y-auto border-t p-2 md:w-72 md:border-l md:border-t-0 md:p-3">
+        <div class="hidden items-center justify-between text-sm md:flex">
+          <span class="text-muted-foreground">Time {{ store.time() }}</span>
+          <span class="text-muted-foreground">Best {{ store.bestLabel() }}</span>
+        </div>
+        <div class="grid grid-cols-4 gap-2 md:grid-cols-1">
+          <button hlmBtn variant="outline" data-testid="undo-btn" class="md:justify-start" (click)="store.undo()">
+            <ng-icon name="lucideUndo2" />
+            Undo
+          </button>
+          <button hlmBtn variant="outline" data-testid="reset-btn" class="md:justify-start" (click)="store.reset()">
+            <ng-icon name="lucideRotateCcw" />
+            Reset
+          </button>
+          <button hlmBtn variant="outline" data-testid="hint-btn" class="md:justify-start" (click)="store.hint()">
+            <ng-icon name="lucideLightbulb" />
+            Hint
+          </button>
+          <button hlmBtn data-testid="new-btn" class="md:justify-start" (click)="store.newRandom()">
+            <ng-icon name="lucideDices" />
+            New
+          </button>
+        </div>
+        @if (store.panelOpen()) {
+          <div hlmSeparator class="my-1 hidden md:block"></div>
+          <div class="space-y-3 border-t pt-2 md:border-t-0 md:pt-0">
+            <div>
+              <label hlmLabel class="mb-1.5 block text-xs text-muted-foreground">Board size</label>
+              <div class="flex flex-wrap gap-1.5">
+                @for (s of sizes; track s) {
+                  <button
+                    hlmBtn
+                    size="sm"
+                    [attr.data-testid]="'size-' + s"
+                    [variant]="store.size() === s ? 'default' : 'outline'"
+                    (click)="store.setSize(s)"
+                  >
+                    {{ s }}×{{ s }}
+                  </button>
+                }
+              </div>
+            </div>
+            <div>
+              <label hlmLabel class="mb-1.5 block text-xs text-muted-foreground" for="seed">Seed</label>
+              <div class="flex gap-1.5">
+                <input
+                  hlmInput
+                  id="seed"
+                  data-testid="seed-input"
+                  placeholder="type a seed…"
+                  autocomplete="off"
+                  spellcheck="false"
+                  [value]="store.seedInput()"
+                  (input)="store.seedInput.set($any($event.target).value)"
+                  (keydown.enter)="playSeed()"
+                />
+                <button hlmBtn data-testid="go-btn" (click)="playSeed()">Go</button>
+              </div>
+            </div>
+            <div class="flex flex-wrap items-center gap-1.5">
+              <button hlmBtn variant="outline" size="icon-sm" aria-label="Previous level" (click)="stepLevel(-1)">
+                <ng-icon name="lucideChevronLeft" />
+              </button>
+              <button hlmBtn variant="outline" size="icon-sm" aria-label="Next level" (click)="stepLevel(1)">
+                <ng-icon name="lucideChevronRight" />
+              </button>
+              <button hlmBtn variant="outline" size="sm" data-testid="random-btn" (click)="store.newRandom()">
+                <ng-icon name="lucideDices" />
+                Random
+              </button>
+              <button hlmBtn variant="outline" size="sm" data-testid="rail-daily-btn" (click)="store.daily()">
+                <ng-icon name="lucideCalendarDays" />
+                Daily
+              </button>
+            </div>
+            <label class="flex items-center justify-between text-sm">
+              <span>Sound</span>
+              <hlm-switch name="sound" data-testid="sound-switch" [checked]="store.soundOn()" (checkedChange)="store.setSound($event)" />
+            </label>
+          </div>
+        }
+      </aside>
+    </div>
+  </div>
+}
+
+@if (store.toastMsg()) {
+  <div
+    class="fixed bottom-20 left-1/2 -translate-x-1/2 rounded-md border bg-popover px-3 py-2 text-sm shadow-lg"
+    role="status"
+  >
+    {{ store.toastMsg() }}
+  </div>
+}
