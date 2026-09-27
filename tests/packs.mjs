@@ -95,9 +95,9 @@ section('daily');
 section('share card');
 {
   const full = dailyShareCard('2026-09-26', ['perfect', 'perfect', 'done', 'todo', 'todo'], 3, null);
-  ok(full === 'Flow Daily 2026-09-26\n⭐⭐🟩⬛⬛\nStreak: 3\n' + FLOW_SITE, 'mixed card exact text');
+  ok(full === 'roflow daily 2026-09-26\n⭐⭐🟩⬛⬛\nstreak: 3\n' + FLOW_SITE, 'mixed card exact text');
   const sweep = dailyShareCard('2026-09-26', ['perfect', 'perfect', 'perfect', 'perfect', 'perfect'], 0, 754);
-  ok(sweep === 'Flow Daily 2026-09-26\n⭐⭐⭐⭐⭐\nStreak: 0 · 12:34\n' + FLOW_SITE, 'perfect sweep with total time');
+  ok(sweep === 'roflow daily 2026-09-26\n⭐⭐⭐⭐⭐\nstreak: 0 · 12:34\n' + FLOW_SITE, 'perfect sweep with total time');
   const empty = dailyShareCard('2026-09-26', ['todo', 'todo', 'todo', 'todo', 'todo'], 0, null);
   ok(empty.split('\n').length === 4 && empty.includes('⬛⬛⬛⬛⬛'), 'untouched day renders blanks');
   ok(!full.endsWith('\n') && full.includes('flow.ronakchavva.com'), 'no trailing newline, site linked');

@@ -78,7 +78,7 @@ export function parseDailySeed(seed: string): { date: string; index: number } | 
 }
 
 /** Public site, printed on share cards so posts find the game. */
-export const FLOW_SITE = 'flow.ronakchavva.com';
+export const FLOW_SITE = 'roflow.ronakchavva.com';
 
 export type DailyMark = 'perfect' | 'done' | 'todo';
 
@@ -102,8 +102,8 @@ export function dailyShareCard(
   streak: number,
   totalSeconds: number | null,
 ): string {
-  const lines = [`Flow Daily ${date}`, marks.map((mk) => MARK_EMOJI[mk]).join('')];
-  lines.push(totalSeconds === null ? `Streak: ${streak}` : `Streak: ${streak} · ${fmtClock(totalSeconds)}`);
+  const lines = [`roflow daily ${date}`, marks.map((mk) => MARK_EMOJI[mk]).join('')];
+  lines.push(totalSeconds === null ? `streak: ${streak}` : `streak: ${streak} · ${fmtClock(totalSeconds)}`);
   lines.push(FLOW_SITE);
   return lines.join('\n');
 }

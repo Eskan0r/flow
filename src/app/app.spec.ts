@@ -41,7 +41,7 @@ describe('App', () => {
   it('boots to the pack list', async () => {
     const { store } = await boot();
     expect(store.view()).toBe('packs');
-    expect(document.querySelector('header h1')?.textContent).toContain('flow');
+    expect(document.querySelector('header h1')?.textContent).toContain('roflow');
     for (const p of PACKS) {
       expect(document.body.textContent).toContain(p.name);
     }
@@ -110,7 +110,7 @@ describe('App', () => {
     expect(document.querySelector('[data-testid=share-btn]')).toBeTruthy();
     const today = store.dailyLabelToday();
     expect(store.shareText(today)).toBe(
-      `Flow Daily ${today}\n⭐⬛⬛⬛⬛\nStreak: 0\nflow.ronakchavva.com`,
+      `roflow daily ${today}\n⭐⬛⬛⬛⬛\nstreak: 0\nroflow.ronakchavva.com`,
     );
   });
 

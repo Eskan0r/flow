@@ -1,4 +1,4 @@
-# Flow — Angular + shadcn-style UI
+# roflow - Angular + shadcn-style UI
 
 Flow Free rebuilt with **Angular 21**, **Tailwind CSS v4**, and **Spartan**
 (the shadcn-style component system for Angular: brain primitives from npm,

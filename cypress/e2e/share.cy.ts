@@ -43,10 +43,10 @@ describe('daily share', () => {
     cy.then(() => {
       expect(calls, 'clipboard writes').to.have.length(1);
       const lines = (calls[0][0] as string).split('\n');
-      expect(lines[0]).to.eq(`Flow Daily ${label}`);
+      expect(lines[0]).to.eq(`roflow daily ${label}`);
       expect(lines[1]).to.eq('⭐⬛⬛⬛⬛');
-      expect(lines[2]).to.eq('Streak: 0');
-      expect(lines[3]).to.eq('flow.ronakchavva.com');
+      expect(lines[2]).to.eq('streak: 0');
+      expect(lines[3]).to.eq('roflow.ronakchavva.com');
       expect(lines).to.have.length(4);
     });
   });
