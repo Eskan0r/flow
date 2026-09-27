@@ -1,5 +1,6 @@
-/* The game board: black canvas, flat dots, solid pipes. Pointer input with
- * swipe interpolation drives the FlowEngine via FlowStore. */
+/* The game board: black canvas, flat dots, solid pipes on square grids and
+ * hexagonal tiles. Pointer input with swipe interpolation drives the
+ * FlowEngine via FlowStore. */
 
 import {
   AfterViewInit,
@@ -14,6 +15,8 @@ import {
   viewChild,
 } from '@angular/core';
 import { FlowStore } from '../core/flow-store';
+import { hexCellCenter, hexCornerOffsets, hexLayout, hexPixelToCell } from '../core/topology';
+import type { HexLayout } from '../core/topology';
 
 const PALETTE = [
   '#ff2222', '#7ac943', '#29a8ff', '#ffe135', '#ff8c00', '#b04df0',
@@ -46,7 +49,9 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
   private readonly canvasRef = viewChild<ElementRef<HTMLCanvasElement>>('canvas');
   private readonly wrapRef = viewChild<ElementRef<HTMLDivElement>>('wrap');
 
-  private cssSide = 300;
+  private cssW = 300;
+  private cssH = 300;
+  private hexLay: HexLayout | null = null;
   private ro: ResizeObserver | null = null;
 
   constructor() {
@@ -87,20 +92,40 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
     const canvas = this.canvasRef()?.nativeElement;
     if (!wrap || !canvas) return;
     const r = wrap.getBoundingClientRect();
-    let side = Math.floor(Math.min(r.width || 320, r.height || 320));
-    if (side < 120) side = Math.floor(r.width || 320);
-    if (side < 120) side = 300;
-    this.cssSide = side;
+    const availW = r.width || 320;
+    const availH = r.height || 320;
+    const e = this.store.engine;
+    let w: number;
+    let h: number;
+    if (e.topo.kind === 'hex') {
+      const unit = hexLayout(e.topo.rows, e.topo.cols, 1);
+      const s = Math.max(8, Math.floor(Math.min(availW / unit.w, availH / unit.h)));
+      this.hexLay = hexLayout(e.topo.rows, e.topo.cols, s);
+      w = Math.floor(this.hexLay.w);
+      h = Math.floor(this.hexLay.h);
+    } else {
+      const side = Math.max(120, Math.floor(Math.min(availW, availH)));
+      this.hexLay = null;
+      w = side;
+      h = side;
+    }
+    this.cssW = w;
+    this.cssH = h;
     const dpr = Math.min(2.5, window.devicePixelRatio || 1);
-    canvas.style.width = `${side}px`;
-    canvas.style.height = `${side}px`;
-    canvas.width = Math.round(side * dpr);
-    canvas.height = Math.round(side * dpr);
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
     this.draw();
   }
 
   private center(r: number, c: number): [number, number] {
-    const cell = this.cssSide / this.store.engine.size;
+    const e = this.store.engine;
+    if (e.topo.kind === 'hex' && this.hexLay) {
+      const p = hexCellCenter(this.hexLay, r, c);
+      return [p.x, p.y];
+    }
+    const cell = this.cssW / e.topo.cols;
     return [(c + 0.5) * cell, (r + 0.5) * cell];
   }
 
@@ -110,14 +135,83 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
     const g = canvas.getContext('2d');
     if (!g) return;
     const e = this.store.engine;
-    const n = e.size;
-    const S = this.cssSide;
-    const cell = S / n;
     const dpr = Math.min(2.5, window.devicePixelRatio || 1);
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.fillStyle = '#000';
-    g.fillRect(0, 0, S, S);
+    g.fillRect(0, 0, this.cssW, this.cssH);
 
+    let pipeW: number;
+    let dotR: number;
+    let edge: number;
+    if (e.topo.kind === 'hex' && this.hexLay) {
+      this.drawHexGrid(g);
+      const s = this.hexLay.s;
+      pipeW = s * 1.04;
+      dotR = s * 0.52;
+      edge = s * 0.12;
+    } else {
+      this.drawSquareGrid(g);
+      const cell = this.cssW / e.topo.cols;
+      pipeW = cell * 0.62;
+      dotR = cell * 0.31;
+      edge = 3;
+    }
+
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    for (let i = 0; i < e.numPairs; i++) {
+      const path = e.paths[i];
+      if (path.length < 2) continue;
+      const col = PALETTE[i % PALETTE.length];
+      const pts = path.map(([r, c]) => this.center(r, c));
+      g.strokeStyle = 'rgba(0,0,0,0.55)';
+      g.lineWidth = pipeW + edge;
+      g.beginPath();
+      g.moveTo(pts[0][0], pts[0][1]);
+      for (let k = 1; k < pts.length; k++) g.lineTo(pts[k][0], pts[k][1]);
+      g.stroke();
+      g.strokeStyle = col;
+      g.lineWidth = pipeW;
+      g.beginPath();
+      g.moveTo(pts[0][0], pts[0][1]);
+      for (let k = 1; k < pts.length; k++) g.lineTo(pts[k][0], pts[k][1]);
+      g.stroke();
+    }
+    for (let i = 0; i < e.numPairs; i++) {
+      const col = PALETTE[i % PALETTE.length];
+      for (let k = 0; k < 2; k++) {
+        const [x, y] = this.center(e.pairs[i][k][0], e.pairs[i][k][1]);
+        g.beginPath();
+        g.arc(x, y, dotR + edge * 0.7, 0, Math.PI * 2);
+        g.fillStyle = '#000';
+        g.fill();
+        g.beginPath();
+        g.arc(x, y, dotR, 0, Math.PI * 2);
+        g.fillStyle = col;
+        g.fill();
+        if (e.done[i]) {
+          g.beginPath();
+          g.arc(x, y, dotR + edge * 1.2, 0, Math.PI * 2);
+          g.strokeStyle = '#fff';
+          g.lineWidth = 2;
+          g.stroke();
+        }
+      }
+    }
+    if (e.active) {
+      const [x, y] = this.center(e.active.last[0], e.active.last[1]);
+      g.beginPath();
+      g.arc(x, y, dotR * 0.45, 0, Math.PI * 2);
+      g.fillStyle = '#fff';
+      g.fill();
+    }
+  }
+
+  private drawSquareGrid(g: CanvasRenderingContext2D): void {
+    const e = this.store.engine;
+    const n = e.topo.cols;
+    const S = this.cssW;
+    const cell = S / n;
     g.strokeStyle = '#232323';
     g.lineWidth = 1;
     g.beginPath();
@@ -132,57 +226,27 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
     g.strokeStyle = '#3d3d3d';
     g.lineWidth = 2;
     g.strokeRect(1, 1, S - 2, S - 2);
+  }
 
-    g.lineCap = 'round';
-    g.lineJoin = 'round';
-    for (let i = 0; i < e.numPairs; i++) {
-      const path = e.paths[i];
-      if (path.length < 2) continue;
-      const col = PALETTE[i % PALETTE.length];
-      const w = cell * 0.62;
-      const pts = path.map(([r, c]) => this.center(r, c));
-      g.strokeStyle = 'rgba(0,0,0,0.55)';
-      g.lineWidth = w + 3;
-      g.beginPath();
-      g.moveTo(pts[0][0], pts[0][1]);
-      for (let k = 1; k < pts.length; k++) g.lineTo(pts[k][0], pts[k][1]);
-      g.stroke();
-      g.strokeStyle = col;
-      g.lineWidth = w;
-      g.beginPath();
-      g.moveTo(pts[0][0], pts[0][1]);
-      for (let k = 1; k < pts.length; k++) g.lineTo(pts[k][0], pts[k][1]);
-      g.stroke();
-    }
-    for (let i = 0; i < e.numPairs; i++) {
-      const col = PALETTE[i % PALETTE.length];
-      for (let k = 0; k < 2; k++) {
-        const [x, y] = this.center(e.pairs[i][k][0], e.pairs[i][k][1]);
-        const rad = cell * 0.31;
-        g.beginPath();
-        g.arc(x, y, rad + 2, 0, Math.PI * 2);
-        g.fillStyle = '#000';
-        g.fill();
-        g.beginPath();
-        g.arc(x, y, rad, 0, Math.PI * 2);
-        g.fillStyle = col;
-        g.fill();
-        if (e.done[i]) {
-          g.beginPath();
-          g.arc(x, y, rad + 3.5, 0, Math.PI * 2);
-          g.strokeStyle = '#fff';
-          g.lineWidth = 2;
-          g.stroke();
+  private drawHexGrid(g: CanvasRenderingContext2D): void {
+    const e = this.store.engine;
+    const lay = this.hexLay as HexLayout;
+    const offs = hexCornerOffsets(lay.s);
+    g.strokeStyle = '#232323';
+    g.lineWidth = 1;
+    g.beginPath();
+    for (let r = 0; r < e.topo.rows; r++) {
+      for (let c = 0; c < e.topo.cols; c++) {
+        const ctr = hexCellCenter(lay, r, c);
+        for (let k = 0; k < 6; k++) {
+          const a = offs[k];
+          const b = offs[(k + 1) % 6];
+          g.moveTo(ctr.x + a.x, ctr.y + a.y);
+          g.lineTo(ctr.x + b.x, ctr.y + b.y);
         }
       }
     }
-    if (e.active) {
-      const [x, y] = this.center(e.active.last[0], e.active.last[1]);
-      g.beginPath();
-      g.arc(x, y, cell * 0.14, 0, Math.PI * 2);
-      g.fillStyle = '#fff';
-      g.fill();
-    }
+    g.stroke();
   }
 
   private evCell(ev: PointerEvent): [number, number] | null {
@@ -190,9 +254,14 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
     if (!canvas) return null;
     const e = this.store.engine;
     const rect = canvas.getBoundingClientRect();
-    const cell = rect.width / e.size;
-    const c = Math.floor((ev.clientX - rect.left) / cell);
-    const r = Math.floor((ev.clientY - rect.top) / cell);
+    const x = ev.clientX - rect.left;
+    const y = ev.clientY - rect.top;
+    if (e.topo.kind === 'hex' && this.hexLay) {
+      return hexPixelToCell(this.hexLay, e.topo.rows, e.topo.cols, x, y);
+    }
+    const cell = rect.width / e.topo.cols;
+    const c = Math.floor(x / cell);
+    const r = Math.floor(y / cell);
     if (!e.inBounds(r, c)) return null;
     return [r, c];
   }
@@ -261,4 +330,9 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
       this.store.sound.click();
     }
   }
+}
+
+/** Odd-r offset to axial, mirrored here so render math needs no import cycle. */
+function hexAxial(r: number, c: number): { q: number; rr: number } {
+  return { q: c - ((r - (r & 1)) >> 1), rr: r };
 }

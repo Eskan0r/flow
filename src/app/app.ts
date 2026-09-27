@@ -9,6 +9,7 @@ import {
   lucideLightbulb,
   lucideMenu,
   lucideRotateCcw,
+  lucideShare2,
   lucideUndo2,
 } from '@ng-icons/lucide';
 import { BoardComponent } from './board/board.component';
@@ -34,6 +35,7 @@ import { HlmSwitch } from './ui/switch';
       lucideLightbulb,
       lucideMenu,
       lucideRotateCcw,
+      lucideShare2,
       lucideUndo2,
     }),
   ],
@@ -42,7 +44,6 @@ import { HlmSwitch } from './ui/switch';
 })
 export class App implements OnInit {
   protected readonly store = inject(FlowStore);
-  protected readonly sizes = [5, 6, 7, 8, 9, 10];
 
   ngOnInit(): void {
     this.store.boot();
@@ -58,6 +59,22 @@ export class App implements OnInit {
 
   protected levelRange(p: Pack): number[] {
     return Array.from({ length: p.count }, (_, i) => i + 1);
+  }
+
+  protected dailyDate(): string {
+    return this.store.dailyLabelToday();
+  }
+
+  protected dailySize(i: number): number {
+    return this.store.dailySize(i);
+  }
+
+  protected dailyKind(i: number): string {
+    return this.store.dailyKind(i);
+  }
+
+  protected dailyDone(i: number): boolean {
+    return this.store.dailyDoneToday().includes(i);
   }
 
   protected playSeed(): void {
@@ -78,6 +95,12 @@ export class App implements OnInit {
     const p = this.store.pack();
     if (p) {
       this.store.playPackLevel(p, this.store.packLevel() + dir);
+      return;
+    }
+    const parsed = this.store.parseDaily();
+    if (parsed) {
+      const n = parsed.index + dir;
+      this.store.daily(n < 1 ? 5 : n > 5 ? 1 : n);
       return;
     }
     this.store.newRandom();

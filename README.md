@@ -9,9 +9,10 @@ before — every puzzle solvable by construction.
 
 ## Screens
 
-- **Packs** — Daily Puzzles (with streak), Regular Pack (150), Bonus Pack
-  (150), 6×6 / 7×7 / 8×8 / 9×9 Mania (60 each), each with `done / total ★`
-  progress, plus free play.
+- **Packs** — Daily Puzzles (5 fresh boards a day, sizes 5-5-6-7-8 with
+  hexes mixed in, streak for full clears), Regular Pack (150), Bonus Pack
+  (150), Hexes (60 hexagonal-tile levels),
+  each with done / total progress, plus free play.
 - **Levels** — numbered grid per pack; finished levels keep their stars.
 - **Game** — the board fills the viewport; controls dock in a side rail on
   desktop and collapse to a bottom bar on phones.
@@ -75,7 +76,7 @@ Same seed + size = same puzzle. Share via URL (`?seed=…&size=…`, `?level=…
   re-route the tail. Release finalizes the move.
 - Drag from the middle of a pipe to re-route. Right-click a pipe to clear.
 - Side rail (or bottom bar on phones): Undo (counts as a move) / Reset
-  (clears the board and zeroes moves) / Hint / New. Menu: sizes, seeds,
+  (clears the board and zeroes moves; disabled on dailies) / Hint / New. Menu: sizes, seeds,
   levels, daily, sound. Keyboard: `U` `R` `H` `N`.
 - Moves collapse by color: consecutive strokes on the same color cost one
   move total — finishing a color across several releases, or immediately

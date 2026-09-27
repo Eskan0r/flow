@@ -48,10 +48,22 @@ describe('board controls', () => {
     cy.get('[data-testid=board]').should('be.visible');
   });
 
-  it('daily loads the daily puzzle', () => {
+  it('reset is disabled on dailies', () => {
+    cy.clearLocalStorage();
+    cy.visit('/');
+    cy.get('[data-testid=daily-card]').click();
+    cy.get('[data-testid=daily-1]').click();
+    cy.get('[data-testid=reset-btn]').should('be.disabled');
+    cy.get('[data-testid=reset-btn]').parent().should('have.attr', 'title', 'No resets on dailies');
+  });
+
+  it('daily opens the daily list and plays daily 1', () => {
     cy.get('[data-testid=menu-btn]').click();
     cy.get('[data-testid=rail-daily-btn]').click();
+    cy.get('[data-testid=dailies-view]').should('be.visible');
+    cy.get('[data-testid=daily-1]').click();
     cy.contains('Daily Puzzle').should('be.visible');
+    cy.get('[data-testid=board]').should('be.visible');
   });
 
   it('right-click clears a pipe', () => {

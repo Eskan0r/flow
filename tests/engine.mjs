@@ -243,6 +243,18 @@ section('switching colors banks a new move');
   ok(e.moves === 3, `returning to the first color banks a third (got ${e.moves})`);
 }
 
+section('hex boards play end to end');
+{
+  const e = new FlowEngine();
+  e.loadLevel('seed', 0, 'hexplay-test', 6, 'hex');
+  ok(e.topo.kind === 'hex', 'engine uses hex topology');
+  ok(e.pairs.length === e.solution.length && e.pairs.length >= 4, `hex pairs present (${e.pairs.length})`);
+  e.solution.forEach((sg) => drawPath(e, sg));
+  ok(e.won, 'hex board won by drawing all solutions');
+  ok(e.filledPct() === 100, 'hex board 100% filled');
+  ok(e.win && (e.win.stars === 3 || e.win.stars === 1), 'hex win graded');
+}
+
 console.log(`\n----------------------------------------\nENGINE: PASS ${pass} · FAIL ${fail}`);
 if (fail) process.exit(1);
 else console.log('ALL ENGINE CHECKS PASSED');

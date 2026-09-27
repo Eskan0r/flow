@@ -60,6 +60,60 @@ describe('App', () => {
     expect(store.renderTick()).toBeGreaterThan(tick);
   });
 
+  it('opens the daily list from the packs card', async () => {
+    const { fixture, store } = await boot();
+    store.showDailies();
+    expect(store.view()).toBe('dailies');
+    fixture.detectChanges();
+    expect(document.querySelector('[data-testid=dailies-view]')).toBeTruthy();
+  });
+
+  it('reset is refused on dailies', async () => {
+    const { fixture, store } = await boot();
+    store.daily(1);
+    expect(store.view()).toBe('game');
+    fixture.detectChanges();
+    const canvas = boardCanvas();
+    const size = store.engine.size;
+    const sg = store.engine.solution[0];
+    const [x0, y0] = cellXY(sg[0][0], sg[0][1], size);
+    pointer(canvas, 'pointerdown', x0, y0);
+    const [x1, y1] = cellXY(sg[1][0], sg[1][1], size);
+    pointer(canvas, 'pointermove', x1, y1);
+    pointer(canvas, 'pointerup', x1, y1);
+    expect(store.engine.paths[0].length).toBeGreaterThan(0);
+    store.reset();
+    expect(store.engine.paths[0].length).toBeGreaterThan(0);
+    expect(store.toastMsg()).toBe('No resets on dailies');
+    expect(document.querySelector('[data-testid=reset-btn]')?.hasAttribute('disabled')).toBe(true);
+  });
+
+  it('daily win shows Share with the exact card text', async () => {
+    const { fixture, store } = await boot();
+    store.daily(1);
+    expect(store.view()).toBe('game');
+    fixture.detectChanges();
+    const canvas = boardCanvas();
+    const size = store.engine.size;
+    for (const sg of store.engine.solution) {
+      const [x0, y0] = cellXY(sg[0][0], sg[0][1], size);
+      pointer(canvas, 'pointerdown', x0, y0);
+      for (let i = 1; i < sg.length; i++) {
+        const [x, y] = cellXY(sg[i][0], sg[i][1], size);
+        pointer(canvas, 'pointermove', x, y);
+      }
+      const [xe, ye] = cellXY(sg[sg.length - 1][0], sg[sg.length - 1][1], size);
+      pointer(canvas, 'pointerup', xe, ye);
+    }
+    expect(store.engine.won).toBe(true);
+    fixture.detectChanges();
+    expect(document.querySelector('[data-testid=share-btn]')).toBeTruthy();
+    const today = store.dailyLabelToday();
+    expect(store.shareText(today)).toBe(
+      `Flow Daily ${today}\n⭐⬛⬛⬛⬛\nStreak: 0\nflow.ronakchavva.com`,
+    );
+  });
+
   it('opens a pack grid and plays level 1 to a win with the dialog', async () => {
     const { fixture, store } = await boot();
     const pack = PACKS[0];

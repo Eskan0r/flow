@@ -2,8 +2,10 @@
  * in-stroke un-cut, undo history, hints, win detection. A thin UI layer
  * (Angular component) owns rendering, persistence, sound, and timers. */
 
-import { defaultPairsForSize, generateLevel, validateLevel } from './flow-generator';
+import { defaultHexPairs, defaultPairsForSize, generateLevel, validateLevel } from './flow-generator';
 import type { Cell } from './flow-generator';
+import { hexTopology, squareTopology } from './topology';
+import type { BoardKind, Topology } from './topology';
 
 export type PlayMode = 'level' | 'seed';
 
@@ -79,6 +81,8 @@ export class FlowEngine {
   hints = 0;
   /** Color of the last counted session (null = none yet). */
   lastCounted: number | null = null;
+  /** Board geometry. Square by default; hex boards set a hex topology. */
+  topo: Topology = squareTopology(5);
   won = false;
   win: WinInfo | null = null;
   history: EngineSnapshot[] = [];
@@ -93,14 +97,14 @@ export class FlowEngine {
   }
 
   key(r: number, c: number): number {
-    return r * this.size + c;
+    return this.topo.key(r, c);
   }
 
   inBounds(r: number, c: number): boolean {
-    return r >= 0 && r < this.size && c >= 0 && c < this.size;
+    return this.topo.inBounds(r, c);
   }
 
-  loadLevel(mode: PlayMode, levelNum = 1, seed = '', size = 7): void {
+  loadLevel(mode: PlayMode, levelNum = 1, seed = '', size = 7, kind: BoardKind = 'square'): void {
     this.mode = mode;
     if (mode === 'level') {
       this.levelNum = levelNum;
@@ -110,26 +114,32 @@ export class FlowEngine {
       this.seed = seed;
       this.size = size;
     }
-    this.numPairs = defaultPairsForSize(this.size);
+    this.topo = kind === 'hex' ? hexTopology(this.size, this.size) : squareTopology(this.size);
+    this.numPairs = kind === 'hex'
+      ? defaultHexPairs(this.topo.rows, this.topo.cols)
+      : defaultPairsForSize(this.size);
 
-    let lv = generateLevel(this.seed, this.size, this.numPairs);
-    for (let t = 1; t < 6 && !validateLevel(lv).ok; t++) {
-      lv = generateLevel(`${this.seed}#${t}`, this.size, this.numPairs);
-      if (validateLevel(lv).ok) this.seed = `${this.seed}#${t}`;
+    let lv = generateLevel(this.seed, this.size, this.numPairs, { kind, rows: this.topo.rows, cols: this.topo.cols });
+    for (let t = 1; t < 6 && !validateLevel(lv, this.topo).ok; t++) {
+      lv = generateLevel(`${this.seed}#${t}`, this.size, this.numPairs, { kind, rows: this.topo.rows, cols: this.topo.cols });
+      if (validateLevel(lv, this.topo).ok) this.seed = `${this.seed}#${t}`;
     }
     this.pairs = lv.pairs;
     this.solution = lv.solution;
+    // Carved (hex) boards can land a different pair count than requested;
+    // perfect-play math must use the actual board.
+    this.numPairs = lv.solution.length;
 
     this.paths = this.pairs.map(() => []);
     this.done = this.pairs.map(() => false);
-    this.grid = new Array<number>(this.size * this.size).fill(-1);
+    this.grid = new Array<number>(this.topo.total).fill(-1);
     this.epOf = new Map();
     this.epSet = new Set();
     this.pairs.forEach(([a, b], ci) => {
-      this.epOf.set(a[0] * this.size + a[1], ci);
-      this.epOf.set(b[0] * this.size + b[1], ci);
-      this.epSet.add(a[0] * this.size + a[1]);
-      this.epSet.add(b[0] * this.size + b[1]);
+      this.epOf.set(this.key(a[0], a[1]), ci);
+      this.epOf.set(this.key(b[0], b[1]), ci);
+      this.epSet.add(this.key(a[0], a[1]));
+      this.epSet.add(this.key(b[0], b[1]));
     });
     this.rebuild();
     this.moves = 0;
@@ -143,14 +153,13 @@ export class FlowEngine {
   }
 
   rebuild(): void {
-    const n = this.size;
     this.grid.fill(-1);
     this.pairs.forEach(([a, b], ci) => {
-      this.grid[a[0] * n + a[1]] = ci;
-      this.grid[b[0] * n + b[1]] = ci;
+      this.grid[this.key(a[0], a[1])] = ci;
+      this.grid[this.key(b[0], b[1])] = ci;
     });
     this.paths.forEach((p, ci) => {
-      for (const [r, c] of p) this.grid[r * n + c] = ci;
+      for (const [r, c] of p) this.grid[this.key(r, c)] = ci;
     });
     this.pairs.forEach(([a, b], ci) => {
       const p = this.paths[ci];
@@ -173,7 +182,7 @@ export class FlowEngine {
   }
 
   filledPct(): number {
-    return Math.round((this.filledCount() / (this.size * this.size)) * 100);
+    return Math.round((this.filledCount() / this.topo.total) * 100);
   }
 
   connectedCount(): number {
@@ -298,50 +307,35 @@ export class FlowEngine {
   }
 
   private stepsBetween(from: Cell, to: Cell, color: number): Cell[] {
-    // Orthogonal walk that prefers NOT cutting rival pipes: at each step,
-    // when both axis moves are available, step onto the free cell (empty,
-    // own pipe, or own dot). A directly-targeted rival cell is still taken
-    // on the final step, so deliberate cuts keep working.
+    // Topology-generic walk that prefers NOT cutting rival pipes: at each
+    // step, among the options that get closer to the target, step onto the
+    // free cell (empty, own pipe, or own dot). A directly-targeted rival
+    // cell is still taken on the final step, so deliberate cuts keep working.
     const out: Cell[] = [];
-    let r = from[0];
-    let c = from[1];
-    const [tr, tc] = to;
-    let guard = this.size * 2 + 4;
+    let cur: Cell = from.slice() as Cell;
+    const guard = this.topo.total + 8;
     const isFree = (rr: number, cc: number): boolean => {
       if (!this.inBounds(rr, cc)) return false;
-      const k = rr * this.size + cc;
+      const k = this.key(rr, cc);
       if (this.paths[color].some(([pr, pc]) => pr === rr && pc === cc)) return true;
       const epc = this.epOf.get(k);
       if (epc !== undefined) return epc === color;
       return this.grid[k] === -1;
     };
-    while ((r !== tr || c !== tc) && guard-- > 0) {
-      const dr = tr - r;
-      const dc = tc - c;
-      let first: Cell | null = null;
-      let second: Cell | null = null;
-      if (Math.abs(dr) >= Math.abs(dc) && dr !== 0) {
-        first = [r + Math.sign(dr), c];
-        if (dc !== 0) second = [r, c + Math.sign(dc)];
-      } else if (dc !== 0) {
-        first = [r, c + Math.sign(dc)];
-        if (dr !== 0) second = [r + Math.sign(dr), c];
-      } else if (dr !== 0) {
-        first = [r + Math.sign(dr), c];
-      } else {
-        break;
+    for (let g = 0; g < guard; g++) {
+      if (cur[0] === to[0] && cur[1] === to[1]) break;
+      const opts = this.topo.stepOptions(cur, to);
+      if (opts.length === 0) break;
+      let next: Cell | null = null;
+      for (const o of opts) {
+        if (isFree(o[0], o[1])) {
+          next = o;
+          break;
+        }
       }
-      let next: Cell;
-      if (first && second) {
-        const f1 = isFree(first[0], first[1]);
-        const f2 = isFree(second[0], second[1]);
-        next = f1 && !f2 ? first : !f1 && f2 ? second : first;
-      } else {
-        next = (first ?? second) as Cell;
-      }
-      r = next[0];
-      c = next[1];
-      out.push([r, c]);
+      if (!next) next = opts[0];
+      cur = next;
+      out.push([cur[0], cur[1]]);
     }
     return out;
   }
@@ -372,7 +366,7 @@ export class FlowEngine {
       this.rebuild();
       return true;
     }
-    if (Math.abs(head[0] - r) + Math.abs(head[1] - c) !== 1) return false;
+    if (!this.topo.neighbors(head[0], head[1]).some(([rr, cc]) => rr === r && cc === c)) return false;
 
     // Connected flows are capped at their dot: stepping back along the pipe
     // stays live (handled above), but pushing past the endpoint is refused.
@@ -447,10 +441,10 @@ export class FlowEngine {
     const ci = open[0];
     this.pushHistory();
     const want = this.solution[ci];
-    const wantSet = new Set(want.map(([r, c]) => r * this.size + c));
+    const wantSet = new Set(want.map(([r, c]) => this.key(r, c)));
     this.paths.forEach((p, oi) => {
       if (oi === ci) return;
-      const cut = p.findIndex(([r, c]) => wantSet.has(r * this.size + c) && !this.epSet.has(r * this.size + c));
+      const cut = p.findIndex(([r, c]) => wantSet.has(this.key(r, c)) && !this.epSet.has(this.key(r, c)));
       if (cut >= 0) this.paths[oi] = p.slice(0, Math.max(0, cut));
     });
     this.paths[ci] = want.map((cell) => cell.slice() as Cell);
@@ -463,7 +457,7 @@ export class FlowEngine {
   checkWin(): boolean {
     if (this.won) return true;
     if (!this.done.every(Boolean)) return false;
-    if (this.filledCount() !== this.size * this.size) return false;
+    if (this.filledCount() !== this.topo.total) return false;
     this.won = true;
     const perfect = this.moves <= this.numPairs && this.hints === 0;
     this.win = { moves: this.moves, hints: this.hints, perfect, stars: perfect ? 3 : 1 };

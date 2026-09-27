@@ -6,7 +6,7 @@
     "start": "ng serve",
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
-    "test": "node --experimental-strip-types --no-warnings --import ./tests/hooks.mjs tests/validate.mjs && node --experimental-strip-types --no-warnings --import ./tests/hooks.mjs tests/engine.mjs && node --experimental-strip-types --no-warnings --import ./tests/hooks.mjs tests/packs.mjs",
+    "test": "node --experimental-strip-types --no-warnings --import ./tests/hooks.mjs tests/topology.mjs && node --experimental-strip-types --no-warnings --import ./tests/hooks.mjs tests/validate.mjs && node --experimental-strip-types --no-warnings --import ./tests/hooks.mjs tests/hexgen.mjs && node --experimental-strip-types --no-warnings --import ./tests/hooks.mjs tests/engine.mjs && node --experimental-strip-types --no-warnings --import ./tests/hooks.mjs tests/packs.mjs",
     "test:unit": "ng test",
     "cypress:run": "cypress run",
     "cypress:open": "cypress open",

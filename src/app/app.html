@@ -12,13 +12,13 @@
       variant="outline"
       data-testid="daily-card"
       class="mb-2 h-auto items-center justify-between px-4 py-3 text-left"
-      (click)="store.daily()"
+      (click)="store.showDailies()"
     >
       <span>
         <span class="block text-lg font-bold" style="color: #e11d48">Daily Puzzles</span>
-        <span class="block text-xs font-normal text-muted-foreground">A new board every day</span>
+        <span class="block text-xs font-normal text-muted-foreground">5 fresh boards every day</span>
       </span>
-      <span class="text-sm font-semibold tabular-nums">{{ store.dailyDoneCount() }} ★</span>
+      <span class="text-sm font-semibold tabular-nums">{{ store.dailyDoneCount() }}/5 ★</span>
     </button>
 
     @for (p of store.packs; track p.id) {
@@ -83,6 +83,41 @@
       }
     </div>
   </div>
+} @else if (store.view() === 'dailies') {
+  <div data-testid="dailies-view" class="mx-auto flex min-h-dvh w-full max-w-xl flex-col bg-background px-4 pb-8 text-foreground">
+    <header class="flex items-center gap-2 py-3">
+      <button hlmBtn variant="ghost" size="icon" data-testid="back-btn" aria-label="Back to packs" (click)="store.showPacks()">
+        <ng-icon name="lucideArrowLeft" />
+      </button>
+      <div class="flex-1">
+        <h1 class="text-lg font-bold" style="color: #e11d48">Daily Puzzles</h1>
+        <p class="text-xs text-muted-foreground">{{ dailyDate() }} · 5 fresh boards</p>
+      </div>
+      <button hlmBtn variant="ghost" size="icon" data-testid="share-daily-btn" aria-label="Share today's results" (click)="store.shareToday()">
+        <ng-icon name="lucideShare2" />
+      </button>
+      <span hlmBadge variant="secondary">{{ store.dailyStreak() }} day streak</span>
+    </header>
+    @for (i of [1, 2, 3, 4, 5]; track i) {
+      <button
+        hlmBtn
+        variant="outline"
+        [attr.data-testid]="'daily-' + i"
+        class="mb-2 h-auto items-center justify-between px-4 py-3 text-left"
+        (click)="store.daily(i)"
+      >
+        <span>
+          <span class="block text-lg font-bold">Daily {{ i }}</span>
+          <span class="block text-xs font-normal text-muted-foreground">{{ dailySize(i) }}×{{ dailySize(i) }}{{ dailyKind(i) === 'hex' ? ' Hex' : '' }} board</span>
+        </span>
+        @if (dailyDone(i)) {
+          <span class="text-sm font-semibold tabular-nums">✓</span>
+        } @else {
+          <span class="text-sm font-semibold tabular-nums text-muted-foreground">{{ i }}</span>
+        }
+      </button>
+    }
+  </div>
 } @else {
   <div class="flex h-dvh w-full flex-col bg-background text-foreground">
     <header class="flex items-center gap-2 border-b px-2 py-2">
@@ -116,10 +151,19 @@
             <ng-icon name="lucideUndo2" />
             Undo
           </button>
-          <button hlmBtn variant="outline" data-testid="reset-btn" class="md:justify-start" (click)="store.reset()">
-            <ng-icon name="lucideRotateCcw" />
-            Reset
-          </button>
+          <span [title]="store.isDaily() ? 'No resets on dailies' : ''" class="block">
+            <button
+              hlmBtn
+              variant="outline"
+              data-testid="reset-btn"
+              class="w-full md:justify-start"
+              [disabled]="store.isDaily()"
+              (click)="store.reset()"
+            >
+              <ng-icon name="lucideRotateCcw" />
+              Reset
+            </button>
+          </span>
           <button hlmBtn variant="outline" data-testid="hint-btn" class="md:justify-start" (click)="store.hint()">
             <ng-icon name="lucideLightbulb" />
             Hint
@@ -133,9 +177,30 @@
           <div hlmSeparator class="my-1 hidden md:block"></div>
           <div class="space-y-3 border-t pt-2 md:border-t-0 md:pt-0">
             <div>
+              <label hlmLabel class="mb-1.5 block text-xs text-muted-foreground">Tiles</label>
+              <div class="flex flex-wrap gap-1.5">
+                <button
+                  hlmBtn
+                  size="sm"
+                  [variant]="store.kind() === 'square' ? 'default' : 'outline'"
+                  (click)="store.setKind('square')"
+                >
+                  Squares
+                </button>
+                <button
+                  hlmBtn
+                  size="sm"
+                  [variant]="store.kind() === 'hex' ? 'default' : 'outline'"
+                  (click)="store.setKind('hex')"
+                >
+                  Hexes
+                </button>
+              </div>
+            </div>
+            <div>
               <label hlmLabel class="mb-1.5 block text-xs text-muted-foreground">Board size</label>
               <div class="flex flex-wrap gap-1.5">
-                @for (s of sizes; track s) {
+                @for (s of store.sizesForKind(); track s) {
                   <button
                     hlmBtn
                     size="sm"
@@ -176,7 +241,7 @@
                 <ng-icon name="lucideDices" />
                 Random
               </button>
-              <button hlmBtn variant="outline" size="sm" data-testid="rail-daily-btn" (click)="store.daily()">
+              <button hlmBtn variant="outline" size="sm" data-testid="rail-daily-btn" (click)="store.showDailies()">
                 <ng-icon name="lucideCalendarDays" />
                 Daily
               </button>

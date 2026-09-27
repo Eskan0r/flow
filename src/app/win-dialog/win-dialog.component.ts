@@ -12,10 +12,11 @@ export interface WinDialogContext {
   perfect: boolean;
   hints: number;
   isBest: boolean;
-  /** 'Next' normally, 'Home' after a daily puzzle. */
   nextLabel: string;
+  showShare: boolean;
   onReplay: () => void;
   onNext: () => void;
+  onShare: () => void;
 }
 
 @Component({
@@ -60,6 +61,9 @@ export interface WinDialogContext {
     </div>
     <div hlmDialogFooter class="sm:justify-center">
       <button hlmBtn variant="outline" data-testid="replay-btn" (click)="replay()">Replay</button>
+      @if (showShare) {
+        <button hlmBtn variant="outline" data-testid="share-btn" (click)="share()">Share</button>
+      }
       <button hlmBtn data-testid="next-btn" (click)="next()">{{ nextLabel }}</button>
     </div>
   `,
@@ -86,6 +90,9 @@ export class WinDialogComponent {
   protected get nextLabel(): string {
     return this.ctx?.nextLabel ?? 'Next';
   }
+  protected get showShare(): boolean {
+    return this.ctx?.showShare ?? false;
+  }
 
   protected replay(): void {
     this.ref.close({});
@@ -95,5 +102,9 @@ export class WinDialogComponent {
   protected next(): void {
     this.ref.close({});
     this.ctx?.onNext();
+  }
+
+  protected share(): void {
+    this.ctx?.onShare();
   }
 }
