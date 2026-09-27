@@ -58,9 +58,11 @@ hint / new / seed / daily / right-click clear. Stable selectors live on
 2. Seeded **backbite** shuffle keeps it smooth, not twisty.
 3. **Sequential backtracking partition** cuts balanced segments, each
    verified clean as placed: no self-touch, no 2×2 blocks, endpoints never
-   adjacent. The partition IS a full-coverage solution.
-4. Best of several candidates by spread/balance/directness scoring.
-   Minimum flow length 4 — never a 2-cell wriggle.
+   adjacent, at most one straight line, zero border-to-border straights.
+   The partition IS a full-coverage solution.
+4. Best of dozens of candidates by spread/balance/directness scoring, with
+   medium-roughness and best-effort fallbacks that keep the same
+   solvability guarantees. Minimum flow length 4 — never a 2-cell wriggle.
 
 Same seed + size = same puzzle. Share via URL (`?seed=…&size=…`, `?level=…`).
 
@@ -81,7 +83,7 @@ Same seed + size = same puzzle. Share via URL (`?seed=…&size=…`, `?level=…
   move, so switching back and forth is what costs.
 - Win = all pairs linked and board 100% filled. Minimum moves with no
   hints earns ★ PERFECT, anything else gets a ✓ COMPLETE; both show time,
-  moves, Replay/Next.
+  moves, Replay, and Next (Home after a daily).
 
 ## Layout
 

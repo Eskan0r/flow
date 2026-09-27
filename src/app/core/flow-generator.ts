@@ -26,9 +26,11 @@ export interface LevelStats {
   mono2x2: number;
   borderBoth: number;
   straights: number;
+  borderStraight: number;
   overlapCells: number;
   score: number;
   ms: number;
+  tier: 'clean' | 'relaxed' | 'dirty';
 }
 
 export interface GeneratedLevel extends FlowLevel {
@@ -70,10 +72,6 @@ export function seededRng(seedString: string): Rng {
   return mulberry32(xmur3(String(seedString))());
 }
 
-function randInt(rng: Rng, low: number, high: number): number {
-  return low + Math.floor(rng() * (high - low + 1));
-}
-
 function neighborsOf(r: number, c: number, size: number): Cell[] {
   const out: Cell[] = [];
   if (r > 0) out.push([r - 1, c]);
@@ -91,7 +89,8 @@ function isBorder(cell: Cell, size: number): boolean {
   return cell[0] === 0 || cell[0] === size - 1 || cell[1] === 0 || cell[1] === size - 1;
 }
 
-function buildSnake(size: number): Cell[] {
+/** @internal Exported for diagnostics/tests. */
+export function buildSnake(size: number): Cell[] {
   const path: Cell[] = [];
   for (let r = 0; r < size; r++) {
     if (r % 2 === 0) {
@@ -140,20 +139,6 @@ export function backbite(path: Cell[], size: number, rng: Rng, steps: number): C
   return path;
 }
 
-function randomComposition(rng: Rng, total: number, parts: number, minLen: number, maxLen: number): number[] {
-  const lens: number[] = [];
-  let remaining = total;
-  for (let i = 0; i < parts - 1; i++) {
-    const left = parts - 1 - i;
-    const low = Math.max(minLen, remaining - left * maxLen);
-    const high = Math.min(maxLen, remaining - left * minLen);
-    const v = randInt(rng, low, high);
-    lens.push(v);
-    remaining -= v;
-  }
-  lens.push(remaining);
-  return lens;
-}
 
 interface CutInfo {
   segs: Cell[][];
@@ -164,6 +149,7 @@ interface CutInfo {
   mono2x2: number;
   borderBoth: number;
   straights: number;
+  borderStraight: number;
   adjacentSame: number;
   overlapCells: number;
   minD: number;
@@ -177,7 +163,8 @@ interface CutInfo {
   score: number;
 }
 
-function analyzeCut(path: Cell[], size: number, lens: number[]): CutInfo {
+/** @internal Exported for diagnostics/tests. */
+export function analyzeCut(path: Cell[], size: number, lens: number[]): CutInfo {
   const K = lens.length;
   const segs: Cell[][] = [];
   let idx = 0;
@@ -219,10 +206,16 @@ function analyzeCut(path: Cell[], size: number, lens: number[]): CutInfo {
     if (isBorder(a, size) && isBorder(b, size)) borderBoth++;
   }
   let straights = 0;
+  let borderStraight = 0;
   for (const sg of segs) {
     const sameRow = sg.every((cell) => cell[0] === sg[0][0]);
     const sameCol = sg.every((cell) => cell[1] === sg[0][1]);
-    if (sameRow || sameCol) straights++;
+    if (sameRow || sameCol) {
+      straights++;
+      const a = sg[0];
+      const b = sg[sg.length - 1];
+      if (isBorder(a, size) && isBorder(b, size)) borderStraight++;
+    }
   }
   let adjacentSame = 0;
   for (const d of Ds) if (d <= 1) adjacentSame++;
@@ -252,7 +245,7 @@ function analyzeCut(path: Cell[], size: number, lens: number[]): CutInfo {
   const score = minRatio * 3.0 - spread * 0.6 - borderBoth * 0.25 - straights * 0.4 - Math.max(0, maxDetour - 5) * 0.2;
 
   return {
-    segs, pairs, Ds, Ls, touches, mono2x2, borderBoth, straights,
+    segs, pairs, Ds, Ls, touches, mono2x2, borderBoth, straights, borderStraight,
     adjacentSame, overlapCells, minD, minL, maxL, avgL, minRatio,
     avgDetour, maxDetour, spread, score,
   };
@@ -270,7 +263,8 @@ export function lengthBounds(size: number, numPairs: number): { minLen: number; 
 }
 
 /** One snake segment path[l..r) is a clean Flow line: induced path, no 2x2, spread ends. */
-function segClean(path: Cell[], size: number, l: number, r: number, minD: number): boolean {
+/** @internal Exported for diagnostics/tests. */
+export function segClean(path: Cell[], size: number, l: number, r: number, minD: number): boolean {
   const a = path[l];
   const b = path[r - 1];
   const D = Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]);
@@ -298,15 +292,38 @@ function segClean(path: Cell[], size: number, l: number, r: number, minD: number
   return true;
 }
 
-/** Sequential backtracking partition: walk the snake, cut clean segments. */
-function findCleanPartition(
+/** True when snake segment path[l..r) is a perfectly straight line. */
+export function segIsStraight(path: Cell[], l: number, r: number): boolean {
+  const r0 = path[l][0];
+  const c0 = path[l][1];
+  let sameRow = true;
+  let sameCol = true;
+  for (let i = l + 1; i < r; i++) {
+    if (path[i][0] !== r0) sameRow = false;
+    if (path[i][1] !== c0) sameCol = false;
+  }
+  return sameRow || sameCol;
+}
+
+/** True for the degenerate case: a straight run with both ends on the
+ *  border (solvable by just drawing across). */
+export function segIsBorderStraight(path: Cell[], size: number, l: number, r: number): boolean {
+  if (!segIsStraight(path, l, r)) return false;
+  const a = path[l];
+  const b = path[r - 1];
+  return isBorder(a, size) && isBorder(b, size);
+}
+
+/** Sequential backtracking partition: walk the snake, cut clean segments.
+ *  @internal Exported for diagnostics/tests. */
+export function findCleanPartition(
   path: Cell[], size: number, K: number, minLen: number, maxLen: number,
-  minD: number, rng: Rng, budget = 2500,
+  minD: number, rng: Rng, budget = 2500, maxStraights = 99, forbidBorderStraight = false,
 ): number[] | null {
   const total = path.length;
   const lens = new Array<number>(K);
   let calls = 0;
-  function dfs(seg: number, pos: number): boolean {
+  function dfs(seg: number, pos: number, straightsUsed: number): boolean {
     if (++calls > budget) return false;
     if (seg === K) return pos === total;
     const remain = K - seg;
@@ -325,17 +342,36 @@ function findCleanPartition(
     opts.sort((x, y) => Math.abs(x - avg) - Math.abs(y - avg) + (rng() - 0.5) * 0.01);
     for (const L of opts) {
       if (!segClean(path, size, pos, pos + L, minD)) continue;
+      const straight = segIsStraight(path, pos, pos + L);
+      if (straight && straightsUsed >= maxStraights) continue;
+      if (forbidBorderStraight && segIsBorderStraight(path, size, pos, pos + L)) continue;
       lens[seg] = L;
-      if (dfs(seg + 1, pos + L)) return true;
+      if (dfs(seg + 1, pos + L, straightsUsed + (straight ? 1 : 0))) return true;
     }
     return false;
   }
-  return dfs(0, 0) ? lens.slice() : null;
+  return dfs(0, 0, 0) ? lens.slice() : null;
 }
 
 export interface GenerateOptions {
   timeBudgetMs?: number;
   maxPaths?: number;
+}
+
+interface Candidate {
+  lens: number[];
+  info: CutInfo;
+  path: Cell[];
+}
+
+function scoreClean(info: CutInfo): number {
+  const detourPenalty = info.avgDetour < 0.8 ? (0.8 - info.avgDetour) * 0.8 : 0;
+  const hardPenalty = info.minD < 3 ? 0.35 : 0;
+  return (
+    info.minRatio * 3.2 - info.spread * 0.7 - info.borderBoth * 0.5 -
+    info.straights * 0.45 - Math.max(0, info.maxDetour - 5) * 0.25 -
+    detourPenalty - hardPenalty + Math.min(0.5, info.overlapCells / 24)
+  );
 }
 
 export function generateLevel(
@@ -351,59 +387,67 @@ export function generateLevel(
   const total = size * size;
 
   const { minLen, maxLen } = lengthBounds(size, K);
-  const timeBudgetMs = opts.timeBudgetMs ?? 900;
-  const maxPaths = opts.maxPaths ?? (size <= 7 ? 40 : 26);
+  const timeBudgetMs = opts.timeBudgetMs ?? 1400;
+  const maxPaths = opts.maxPaths ?? 70;
 
-  let best: { lens: number[]; info: CutInfo; path: Cell[] } | null = null;
+  let bestClean: Candidate | null = null;
+  let bestRelaxed: Candidate | null = null;
+  let bestDirty: Candidate | null = null;
+  let bestDirtyScore = -Infinity;
+  const considerDirty = (lens: number[], info: CutInfo, path: Cell[]): void => {
+    const s = info.score - info.touches * 0.6 - info.mono2x2 * 2 - info.borderStraight * 0.5;
+    if (!bestDirty || s > bestDirtyScore) {
+      bestDirty = { lens, info, path: path.map((c) => c.slice() as Cell) };
+      bestDirtyScore = s;
+    }
+  };
+  const copyPath = (path: Cell[]): Cell[] => path.map((c) => c.slice() as Cell);
+  // Phase A: smooth Hamiltonians + shape-pruned sequential cuts. Accepted
+  // candidates are touch-free, mono-free, have at most one straight line
+  // and zero border-to-border straights.
   for (let p = 0; p < maxPaths; p++) {
-    if (Date.now() - t0 > timeBudgetMs && best) break;
+    if (Date.now() - t0 > timeBudgetMs && bestClean) break;
     const path = buildSnake(size);
-    backbite(path, size, rng, Math.floor(total * (1.2 + rng() * 3.2)));
-    const lens = findCleanPartition(path, size, K, minLen, maxLen, 2, rng, size <= 7 ? 3000 : 2000);
+    backbite(path, size, rng, Math.floor(total * (0.3 + rng() * 0.6)));
+    const lens = findCleanPartition(path, size, K, minLen, maxLen, 2, rng, 8000, 1, true);
     if (!lens) continue;
     const info = analyzeCut(path, size, lens);
+    considerDirty(lens, info, path);
     if (info.touches !== 0 || info.mono2x2 !== 0 || info.adjacentSame !== 0) continue;
-    if (info.straights > 2) continue;
-    const detourPenalty = info.avgDetour < 0.8 ? (0.8 - info.avgDetour) * 0.8 : 0;
-    const hardPenalty = info.minD < 3 ? 0.35 : 0;
-    const score =
-      info.minRatio * 3.2 - info.spread * 0.7 - info.borderBoth * 0.22 -
-      info.straights * 0.45 - Math.max(0, info.maxDetour - 5) * 0.25 -
-      detourPenalty - hardPenalty + Math.min(0.5, info.overlapCells / 24);
-    info.score = score;
-    if (!best || score > best.info.score) {
-      best = { lens: lens.slice(), info, path: path.map((c) => c.slice() as Cell) };
+    if (info.straights > 1 || info.borderStraight > 0) continue;
+    info.score = scoreClean(info);
+    if (!bestClean || info.score > bestClean.info.score) {
+      bestClean = { lens: lens.slice(), info, path: copyPath(path) };
     }
-    if (best && best.info.score > 1.35 && best.info.minD >= 3 && best.info.straights <= 1) {
+    if (bestClean && bestClean.info.score > 1.35 && bestClean.info.minD >= 3) {
       if (Date.now() - t0 > 120) break;
     }
   }
 
-  if (!best) {
-    const path = buildSnake(size);
-    backbite(path, size, rng, Math.floor(total * 2));
-    for (let a = 0; a < 600; a++) {
-      const lens = randomComposition(rng, total, K, minLen, maxLen);
+  // Phase B: medium-roughness Hamiltonians, touch-free sequential cuts, no
+  // shape pruning. Still solvable with clean essentials.
+  if (!bestClean && Date.now() - t0 < timeBudgetMs + 400) {
+    for (let p = 0; p < 40; p++) {
+      const path = buildSnake(size);
+      backbite(path, size, rng, Math.floor(total * (1.0 + rng() * 1.0)));
+      const lens = findCleanPartition(path, size, K, minLen, maxLen, 2, rng, 3000, 99, false);
+      if (!lens) continue;
       const info = analyzeCut(path, size, lens);
-      if (info.adjacentSame > 0 || info.mono2x2 > 0) continue;
-      const score = info.score - info.touches * 0.6;
-      if (!best || score > best.info.score) {
-        best = { lens, info, path: path.map((c) => c.slice() as Cell) };
+      considerDirty(lens, info, path);
+      if (info.touches !== 0 || info.mono2x2 !== 0 || info.adjacentSame !== 0) continue;
+      info.score = scoreClean(info);
+      if (!bestRelaxed || info.score > bestRelaxed.info.score) {
+        bestRelaxed = { lens: lens.slice(), info, path: copyPath(path) };
       }
+      if (bestRelaxed && bestRelaxed.info.score > 1.2 && Date.now() - t0 > timeBudgetMs) break;
     }
   }
-  if (!best) {
-    const path = buildSnake(size);
-    const lens: number[] = [];
-    let rem = total;
-    for (let i = 0; i < K - 1; i++) {
-      const v = Math.floor(rem / (K - i));
-      lens.push(v);
-      rem -= v;
-    }
-    lens.push(rem);
-    best = { lens, info: analyzeCut(path, size, lens), path };
-  }
+
+  // Phase C: best-effort fallback. Always yields a solvable board (the cut
+  // itself is a full-coverage solution); only the shape polish may be missing.
+  const best = bestClean ?? bestRelaxed ?? bestDirty;
+  if (!best) throw new Error('generator failed (no candidate)');
+  const tier = bestClean ? 'clean' : bestRelaxed ? 'relaxed' : 'dirty';
 
   const { info, path } = best;
   const segs: Cell[][] = [];
@@ -424,8 +468,10 @@ export function generateLevel(
       avgDetour: +info.avgDetour.toFixed(2), maxDetour: info.maxDetour,
       touches: info.touches, mono2x2: info.mono2x2,
       borderBoth: info.borderBoth, straights: info.straights,
+      borderStraight: info.borderStraight,
       overlapCells: info.overlapCells, score: +info.score.toFixed(3),
       ms: Date.now() - t0,
+      tier,
     },
   };
 }

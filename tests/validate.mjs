@@ -56,6 +56,9 @@ section('solvability + human-experience invariants (all sizes x seeds)');
       ok(s.mono2x2 === 0, `size ${size} seed ${seed}: no 2x2 mono`);
       ok(s.minD >= 2, `size ${size} seed ${seed}: endpoints never adjacent (minD ${s.minD}>=2)`);
       ok(s.minRatio >= 0.25, `size ${size} seed ${seed}: direct flows (minRatio ${s.minRatio}>=0.25)`);
+      ok(s.straights <= 1, `size ${size} seed ${seed}: at most one straight (got ${s.straights})`);
+      ok(s.borderStraight === 0, `size ${size} seed ${seed}: no border-to-border straight`);
+      ok(s.tier === 'clean', `size ${size} seed ${seed}: clean tier (got ${s.tier})`);
       if (size <= 7) ok(s.overlapCells >= 2, `size ${size} seed ${seed}: contention overlap ${s.overlapCells}>=2`);
       ok(s.maxDetour <= Math.ceil((size * size / K) * 0.9), `size ${size} seed ${seed}: maxDetour ${s.maxDetour} not cheesy`);
       ok(ms < 1500, `size ${size} seed ${seed}: gen ${ms}ms < 1500ms`);
@@ -70,14 +73,19 @@ section('solvability + human-experience invariants (all sizes x seeds)');
 section('level seeds 1..60 (progression pack)');
 {
   const sizeForLevel = (n) => (n <= 5 ? 5 : n <= 12 ? 6 : n <= 22 ? 7 : n <= 34 ? 8 : n <= 48 ? 9 : 10);
-  let bad = 0;
+  let bad = 0, badShape = 0;
   for (let n = 1; n <= 60; n++) {
     const size = sizeForLevel(n);
     const lv = generateLevel(`flow-level-${n}`, size, defaultPairsForSize(size));
     const v = validateLevel(lv);
     if (!v.ok) { bad++; console.error(`  FAIL: level ${n}: ${v.errors.slice(0, 2).join(' | ')}`); }
+    else if (lv.stats.straights > 1 || lv.stats.borderStraight > 0 || lv.stats.tier !== 'clean') {
+      badShape++;
+      console.error(`  FAIL-SHAPE: level ${n}: straights=${lv.stats.straights} borderStraight=${lv.stats.borderStraight} tier=${lv.stats.tier}`);
+    }
   }
   ok(bad === 0, `60/60 progression levels valid (bad=${bad})`);
+  ok(badShape === 0, `60/60 progression levels clean-shaped (badShape=${badShape})`);
 }
 
 section('edge cases');
@@ -86,13 +94,15 @@ section('edge cases');
   ok(validateLevel(e1).ok, 'empty seed still generates valid puzzle');
   const e2 = generateLevel(' ⌥flow ', 10, 10);
   ok(validateLevel(e2).ok, 'unicode seed valid');
-  let minSeen = 99;
+  let minSeen = 99, badShape = 0;
   for (let i = 0; i < 200; i++) {
     const lv = generateLevel(`fuzz-${i}`, 7, 7);
     minSeen = Math.min(minSeen, lv.stats.minLen);
     if (!validateLevel(lv).ok) { ok(false, `fuzz-${i} invalid`); break; }
+    if (lv.stats.straights > 1 || lv.stats.borderStraight > 0 || lv.stats.tier !== 'clean') badShape++;
   }
   ok(minSeen >= 4, `200 fuzz seeds: shortest flow ever = ${minSeen} (must be >=4)`);
+  ok(badShape === 0, `200 fuzz seeds: all clean-shaped (badShape=${badShape})`);
 }
 
 console.log(`\n----------------------------------------\nGENERATOR: PASS ${pass} · FAIL ${fail}`);

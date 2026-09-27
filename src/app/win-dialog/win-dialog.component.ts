@@ -12,6 +12,8 @@ export interface WinDialogContext {
   perfect: boolean;
   hints: number;
   isBest: boolean;
+  /** 'Next' normally, 'Home' after a daily puzzle. */
+  nextLabel: string;
   onReplay: () => void;
   onNext: () => void;
 }
@@ -58,7 +60,7 @@ export interface WinDialogContext {
     </div>
     <div hlmDialogFooter class="sm:justify-center">
       <button hlmBtn variant="outline" data-testid="replay-btn" (click)="replay()">Replay</button>
-      <button hlmBtn data-testid="next-btn" (click)="next()">Next</button>
+      <button hlmBtn data-testid="next-btn" (click)="next()">{{ nextLabel }}</button>
     </div>
   `,
 })
@@ -80,6 +82,9 @@ export class WinDialogComponent {
   }
   protected get isBest(): boolean {
     return this.ctx?.isBest ?? false;
+  }
+  protected get nextLabel(): string {
+    return this.ctx?.nextLabel ?? 'Next';
   }
 
   protected replay(): void {

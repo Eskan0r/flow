@@ -49,13 +49,18 @@ section('pack levels generate valid puzzles');
   for (const p of PACKS) picks.push([p, 1], [p, Math.floor(p.count / 2)], [p, p.count]);
   const reg = PACKS.find((p) => p.id === 'regular');
   for (let n = 5; n <= 150; n += 13) picks.push([reg, n]);
-  let bad = 0;
+  let bad = 0, badShape = 0;
   for (const [p, n] of picks) {
     const lv = generateLevel(p.seedForLevel(n), p.sizeForLevel(n), null);
     const v = validateLevel(lv);
     if (!v.ok) { bad++; console.error(`  FAIL: ${p.id} #${n}: ${v.errors.slice(0, 2).join(' | ')}`); }
+    else if (lv.stats.straights > 1 || lv.stats.borderStraight > 0 || lv.stats.tier !== 'clean') {
+      badShape++;
+      console.error(`  FAIL-SHAPE: ${p.id} #${n}: straights=${lv.stats.straights} borderStraight=${lv.stats.borderStraight} tier=${lv.stats.tier}`);
+    }
   }
   ok(bad === 0, `${picks.length} sampled pack levels all valid`);
+  ok(badShape === 0, `${picks.length} sampled pack levels all clean-shaped`);
 }
 
 section('daily');

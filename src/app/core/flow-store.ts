@@ -406,7 +406,10 @@ export class FlowStore {
       return;
     }
     const e = this.engine;
-    if (!e.seed.startsWith('daily-')) {
+    if (e.seed.startsWith('daily-')) {
+      // No "next" daily: go home to the packs.
+      this.showPacks();
+    } else {
       const sd = randomSeed();
       this.seedInput.set(sd);
       this.loadSeed(sd, e.size);
@@ -449,6 +452,7 @@ export class FlowStore {
       perfect: win.perfect,
       hints: win.hints,
       isBest,
+      nextLabel: this.engine.seed.startsWith('daily-') ? 'Home' : 'Next',
       onReplay: () => this.replay(),
       onNext: () => this.next(),
     };
