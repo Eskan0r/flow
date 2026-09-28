@@ -77,6 +77,18 @@ export class App implements OnInit {
     return this.store.dailyDoneToday().includes(i);
   }
 
+  protected dailyAllDone(): boolean {
+    return this.store.dailyAllDoneToday();
+  }
+
+  protected dailyShareText(): string {
+    return this.store.shareText(this.store.dailyLabelToday());
+  }
+
+  protected copyDailyShare(): void {
+    void this.store.shareToday();
+  }
+
   protected playSeed(): void {
     const sd = this.store.seedInput().trim();
     if (!sd) {

@@ -9,7 +9,6 @@ function todayLabel(): string {
 
 function stubClipboard(calls: unknown[][]): void {
   cy.window().then((win) => {
-    Object.defineProperty(win.navigator, 'share', { value: undefined, configurable: true });
     Object.defineProperty(win.navigator, 'clipboard', {
       value: {
         writeText: (text: string) => {
@@ -39,6 +38,7 @@ describe('daily share', () => {
     });
 
     cy.get('[data-testid=win-dialog]').should('be.visible');
+    cy.get('[data-testid=share-text]').should('contain', `roflow daily ${label}`);
     cy.get('[data-testid=share-btn]').click();
     cy.then(() => {
       expect(calls, 'clipboard writes').to.have.length(1);

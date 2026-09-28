@@ -214,6 +214,19 @@ export class FlowStore {
   /** Play one of today's puzzles (1-based index into DAILY_SIZES/KINDS). */
   daily(index = 1): void {
     const i = Math.min(Math.max(1, index), DAILY_COUNT);
+    // Dailies are one-shot: a completed level can't be replayed. Send the
+    // player back to the menu instead of loading the board again.
+    const today = dailyLabel();
+    const done = this.dailyDoneOn(today);
+    if (done.includes(i)) {
+      this.showDailies();
+      this.toast(
+        done.length >= DAILY_COUNT
+          ? 'All dailies complete — share your results'
+          : 'Already completed — try the next one',
+      );
+      return;
+    }
     const sd = dailySeed(new Date(), i);
     const k = DAILY_KINDS[i - 1];
     this.seedInput.set(sd);
@@ -240,6 +253,21 @@ export class FlowStore {
   /** Parse the current engine seed as a daily ({date,index}) or null. */
   parseDaily(): { date: string; index: number } | null {
     return parseDailySeed(this.engine.seed);
+  }
+
+  /** Next not-yet-completed daily index after `afterIndex` (wraps), or null when all done. */
+  nextUndoneDaily(date: string, afterIndex = 0): number | null {
+    const done = new Set(this.dailyDoneOn(date));
+    for (let k = 1; k <= DAILY_COUNT; k++) {
+      const idx = ((afterIndex + k - 1) % DAILY_COUNT) + 1;
+      if (!done.has(idx)) return idx;
+    }
+    return null;
+  }
+
+  /** True once all 5 of today's dailies are complete. */
+  dailyAllDoneToday(): boolean {
+    return this.dailyDoneOn(dailyLabel()).length >= DAILY_COUNT;
   }
 
   setSize(size: number): void {
@@ -354,25 +382,12 @@ export class FlowStore {
     return dailyShareCard(date, this.dailyMarks(date), this.dailyStreak(), this.dailyTotalTime(date));
   }
 
-  /** Copy the day's card: native share sheet on mobile, clipboard otherwise. */
+  /** Copy the day's card straight to the clipboard. */
   async shareToday(date: string = dailyLabel()): Promise<void> {
-    const text = this.shareText(date);
-    try {
-      const nav = window.navigator as Navigator & {
-        share?: (data: { text: string }) => Promise<void>;
-      };
-      if (typeof nav.share === 'function') {
-        await nav.share({ text });
-        return;
-      }
-    } catch (err) {
-      // User dismissed the sheet: stay silent. Real failures fall through.
-      if (err instanceof Error && err.name === 'AbortError') return;
-    }
-    if (await this.copyText(text)) {
+    if (await this.copyText(this.shareText(date))) {
       this.toast('Copied to clipboard');
     } else {
-      this.toast('Copy failed — long-press to copy');
+      this.toast('Copy failed — long-press the text to copy');
     }
   }
 
@@ -575,6 +590,22 @@ export class FlowStore {
     if (p) this.playPackLevel(p, this.packLevel());
     else {
       const e = this.engine;
+      // Dailies are one-shot: once a daily is done it can't be replayed.
+      // (Win-dialog Replay only fires after a win, so the current daily is
+      // done by then — route onward instead of reloading it.)
+      const parsed = parseDailySeed(e.seed);
+      if (parsed) {
+        const done = this.dailyDoneOn(parsed.date);
+        if (done.includes(parsed.index)) {
+          const nxt = this.nextUndoneDaily(parsed.date, parsed.index);
+          if (nxt !== null) this.daily(nxt);
+          else {
+            this.showDailies();
+            this.toast('All dailies complete — share your results');
+          }
+          return;
+        }
+      }
       this.loadSeed(e.seed, e.size, e.topo.kind);
       this.sound.click();
     }
@@ -593,7 +624,9 @@ export class FlowStore {
     }
     const parsed = parseDailySeed(this.engine.seed);
     if (parsed) {
-      if (parsed.index < DAILY_COUNT) this.daily(parsed.index + 1);
+      // Skip already-completed dailies; land on the menu once all 5 are done.
+      const nxt = this.nextUndoneDaily(parsed.date, parsed.index);
+      if (nxt !== null) this.daily(nxt);
       else {
         this.showDailies();
         this.toast('All dailies complete');
@@ -639,6 +672,9 @@ export class FlowStore {
       this.recordDaily(this.engine.seed);
       if (parsedDaily) this.saveDailyStars(parsedDaily.date, parsedDaily.index, win.stars);
     }
+    // Share card only makes sense once the full set of 5 dailies is done.
+    // recordDaily() ran above, so the just-finished puzzle is already counted.
+    const dailyComplete = parsedDaily ? this.dailyDoneOn(parsedDaily.date).length >= DAILY_COUNT : false;
     const ctx: WinDialogContext = {
       stars: win.stars,
       time: fmtT(secs),
@@ -646,8 +682,12 @@ export class FlowStore {
       perfect: win.perfect,
       hints: win.hints,
       isBest,
-      nextLabel: parsedDaily && parsedDaily.index >= DAILY_COUNT ? 'Home' : 'Next',
-      showShare: parsedDaily !== null,
+      nextLabel: parsedDaily ? (dailyComplete ? 'Home' : 'Next') : 'Next',
+      showShare: dailyComplete,
+      // Built after recording, so the just-finished puzzle is included.
+      shareText: parsedDaily && dailyComplete ? this.shareText(parsedDaily.date) : null,
+      // Dailies are one-shot: no Replay once played (win implies done).
+      showReplay: parsedDaily ? false : true,
       onReplay: () => this.replay(),
       onNext: () => this.next(),
       onShare: () => void this.shareToday(),
@@ -659,6 +699,9 @@ export class FlowStore {
       context: ctx,
       disableClose: true,
       ariaDescribedBy: 'flow-win-desc',
+      // Fixed, appropriately-sized win modal: narrow card centered on all screens.
+      // Overrides the base dialog's sm:max-w-md / sm:mx-0 via tailwind-merge.
+      contentClass: 'w-[min(92vw,22rem)] sm:max-w-[22rem] sm:mx-auto',
     });
     this.winOpen.set(true);
     this.sound.win();

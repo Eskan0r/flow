@@ -85,6 +85,27 @@ Same seed + size = same puzzle. Share via URL (`?seed=…&size=…`, `?level=…
 - Win = all pairs linked and board 100% filled. Minimum moves with no
   hints earns ★ PERFECT, anything else gets a ✓ COMPLETE; both show time,
   moves, Replay, and Next (Home after a daily).
+- Daily wins show the share card right in the dialog with a Copy button
+  (Wordle-style: one glyph per daily, streak, total best time on full
+  clears); the dailies list header shares too. Progress lives in
+  localStorage — no accounts, no backend (see Storage below).
+
+## Storage
+
+Everything persists in the browser's localStorage, per device and per
+subdomain — there is no backend:
+
+- `flow.stars.<pack>.<level>` — best stars per pack level
+- `flow.daily.done` — completed daily labels (`YYYY-MM-DD-index`)
+- `flow.dstars.<date>-<index>` — best stars per daily
+- `flow.best.<seed>.s<size>` — best time + moves per puzzle
+- `flow.last` — last route, restored on reload
+
+The streak counts consecutive days with all 5 dailies complete (ending
+today or yesterday), computed from the stored completion dates — no
+server clock involved. Same-device only: clearing site data wipes it,
+and two devices don't sync. Share links work because boards are
+deterministic from their seeds.
 
 ## Layout
 

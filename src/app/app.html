@@ -120,6 +120,12 @@
         }
       </button>
     }
+    @if (dailyAllDone()) {
+      <div data-testid="daily-share-card" class="mt-2 rounded-lg border bg-muted/50 p-3">
+        <div data-testid="daily-share-text" class="text-sm whitespace-pre-line select-all">{{ dailyShareText() }}</div>
+        <button hlmBtn variant="outline" data-testid="daily-share-copy-btn" class="mt-2 w-full" (click)="copyDailyShare()">Copy</button>
+      </div>
+    }
   </div>
 } @else {
   <div class="flex h-dvh w-full flex-col bg-background text-foreground">

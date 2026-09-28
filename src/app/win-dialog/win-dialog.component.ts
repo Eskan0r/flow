@@ -14,6 +14,10 @@ export interface WinDialogContext {
   isBest: boolean;
   nextLabel: string;
   showShare: boolean;
+  /** Prebuilt share card text (daily wins only, null otherwise). */
+  shareText: string | null;
+  /** False for dailies (one-shot: no replay once played). Defaults to true. */
+  showReplay?: boolean;
   onReplay: () => void;
   onNext: () => void;
   onShare: () => void;
@@ -59,12 +63,17 @@ export interface WinDialogContext {
         <div class="text-lg font-semibold tabular-nums">{{ moves }}</div>
       </div>
     </div>
-    <div hlmDialogFooter class="sm:justify-center">
-      <button hlmBtn variant="outline" data-testid="replay-btn" (click)="replay()">Replay</button>
-      @if (showShare) {
-        <button hlmBtn variant="outline" data-testid="share-btn" (click)="share()">Share</button>
+    <div hlmDialogFooter class="flex-col gap-2 sm:flex-col sm:justify-center">
+      @if (showShare && shareText) {
+        <div data-testid="share-text" class="w-full rounded-lg border bg-muted/50 p-3 text-left text-sm whitespace-pre-line select-all">{{ shareText }}</div>
+        <button hlmBtn variant="outline" data-testid="share-btn" class="w-full" (click)="share()">Copy</button>
       }
-      <button hlmBtn data-testid="next-btn" (click)="next()">{{ nextLabel }}</button>
+      <div class="flex w-full justify-center gap-2">
+        @if (showReplay) {
+          <button hlmBtn variant="outline" data-testid="replay-btn" (click)="replay()">Replay</button>
+        }
+        <button hlmBtn data-testid="next-btn" (click)="next()">{{ nextLabel }}</button>
+      </div>
     </div>
   `,
 })
@@ -92,6 +101,12 @@ export class WinDialogComponent {
   }
   protected get showShare(): boolean {
     return this.ctx?.showShare ?? false;
+  }
+  protected get showReplay(): boolean {
+    return this.ctx?.showReplay ?? true;
+  }
+  protected get shareText(): string | null {
+    return this.ctx?.shareText ?? null;
   }
 
   protected replay(): void {
