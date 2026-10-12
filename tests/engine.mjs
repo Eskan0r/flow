@@ -255,6 +255,22 @@ section('hex boards play end to end');
   ok(e.win && (e.win.stars === 3 || e.win.stars === 1), 'hex win graded');
 }
 
+section('rectangular boards play end to end');
+{
+  const e = new FlowEngine();
+  e.loadLevel('seed', 0, 'rectplay-test', 7, 'square', 5, 8);
+  ok(e.rows === 5 && e.cols === 8 && e.topo.total === 40, 'engine honors rows x cols');
+  ok(e.size === 7, 'size stays the nominal param (max dim from pack)');
+  ok(e.topo.kind === 'square', 'rect board stays square topology kind');
+  e.solution.forEach((sg) => drawPath(e, sg));
+  ok(e.won, 'rect board won by drawing all solutions');
+  ok(e.filledPct() === 100, 'rect board 100% filled');
+  // square default still works and matches old behavior
+  const s = new FlowEngine();
+  s.loadLevel('seed', 0, 'rectplay-square', 7);
+  ok(s.rows === 7 && s.cols === 7 && s.topo.total === 49, 'square default rows/cols = size');
+}
+
 console.log(`\n----------------------------------------\nENGINE: PASS ${pass} · FAIL ${fail}`);
 if (fail) process.exit(1);
 else console.log('ALL ENGINE CHECKS PASSED');

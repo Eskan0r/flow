@@ -24,26 +24,28 @@ export interface Topology {
   collinear(cells: Cell[]): boolean;
 }
 
-export function squareTopology(size: number): Topology {
-  const inBounds = (r: number, c: number): boolean => r >= 0 && r < size && c >= 0 && c < size;
+/** Rectangular square-grid topology (rows x cols). `squareTopology` is the
+ *  square special case. Key stride is `cols`, matching hex storage. */
+export function rectTopology(rows: number, cols: number): Topology {
+  const inBounds = (r: number, c: number): boolean => r >= 0 && r < rows && c >= 0 && c < cols;
   const neighbors = (r: number, c: number): Cell[] => {
     const out: Cell[] = [];
     if (r > 0) out.push([r - 1, c]);
-    if (r < size - 1) out.push([r + 1, c]);
+    if (r < rows - 1) out.push([r + 1, c]);
     if (c > 0) out.push([r, c - 1]);
-    if (c < size - 1) out.push([r, c + 1]);
+    if (c < cols - 1) out.push([r, c + 1]);
     return out;
   };
   return {
     kind: 'square',
-    rows: size,
-    cols: size,
-    total: size * size,
-    key: (r, c) => r * size + c,
+    rows,
+    cols,
+    total: rows * cols,
+    key: (r, c) => r * cols + c,
     inBounds,
     neighbors,
     distance: ([r1, c1], [r2, c2]) => Math.abs(r1 - r2) + Math.abs(c1 - c2),
-    isBorder: ([r, c]) => r === 0 || r === size - 1 || c === 0 || c === size - 1,
+    isBorder: ([r, c]) => r === 0 || r === rows - 1 || c === 0 || c === cols - 1,
     stepOptions: ([r, c], [tr, tc]) => {
       const out: Cell[] = [];
       const dr = tr - r;
@@ -65,6 +67,10 @@ export function squareTopology(size: number): Topology {
       return cells.every(([r]) => r === r0) || cells.every(([, c]) => c === c0);
     },
   };
+}
+
+export function squareTopology(size: number): Topology {
+  return rectTopology(size, size);
 }
 
 /* ---------- hex (odd-r offset storage, axial math internally) ---------- */

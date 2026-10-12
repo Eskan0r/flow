@@ -91,8 +91,10 @@ export class FlowStore {
     if (q?.get('seed')) {
       const size = Math.min(10, Math.max(5, parseInt(q.get('size') ?? '7', 10) || 7));
       const kind = q.get('kind') === 'hex' ? 'hex' : 'square';
+      const rows = parseInt(q.get('rows') ?? '0', 10) || 0;
+      const cols = parseInt(q.get('cols') ?? '0', 10) || 0;
       this.seedInput.set(q.get('seed') ?? '');
-      this.loadSeed(this.seedInput(), size, kind);
+      this.loadSeed(this.seedInput(), size, kind, rows, cols);
     } else if (q?.get('level')) {
       // legacy route from before packs existed ? start of Regular Pack
       const p = packById('regular');
@@ -112,8 +114,10 @@ export class FlowStore {
         if (u.searchParams.get('seed')) {
           const s2 = Math.min(10, Math.max(5, parseInt(u.searchParams.get('size') ?? '7', 10) || 7));
           const k2 = u.searchParams.get('kind') === 'hex' ? 'hex' : 'square';
+          const r2 = parseInt(u.searchParams.get('rows') ?? '0', 10) || 0;
+          const c2 = parseInt(u.searchParams.get('cols') ?? '0', 10) || 0;
           this.seedInput.set(u.searchParams.get('seed') ?? '');
-          this.loadSeed(this.seedInput(), s2, k2);
+          this.loadSeed(this.seedInput(), s2, k2, r2, c2);
         } else {
           this.showPacks();
         }
@@ -138,6 +142,10 @@ export class FlowStore {
       } else {
         u.searchParams.set('seed', this.engine.seed);
         u.searchParams.set('size', String(this.engine.size));
+        if (this.engine.rows !== this.engine.cols) {
+          u.searchParams.set('rows', String(this.engine.rows));
+          u.searchParams.set('cols', String(this.engine.cols));
+        }
         if (this.engine.topo.kind === 'hex') u.searchParams.set('kind', 'hex');
       }
       history.replaceState(null, '', u.toString());
@@ -181,24 +189,25 @@ export class FlowStore {
     this.packLevel.set(level);
     this.kind.set(p.kind);
     this.seedInput.set('');
-    this.engine.loadLevel('seed', 0, p.seedForLevel(level), p.sizeForLevel(level), p.kind);
+    const { rows, cols } = p.shapeForLevel(level);
+    this.engine.loadLevel('seed', 0, p.seedForLevel(level), p.sizeForLevel(level), p.kind, rows, cols);
     this.view.set('game');
     this.afterLoad();
     if (announce) this.sound.click();
   }
 
-  playCustom(seed: string, size: number, kind?: BoardKind): void {
+  playCustom(seed: string, size: number, kind?: BoardKind, rows = 0, cols = 0): void {
     const k = kind ?? this.kind();
     this.pack.set(null);
     this.kind.set(k);
-    this.loadSeed(seed, size, k);
+    this.loadSeed(seed, size, k, rows, cols);
     this.view.set('game');
   }
 
-  loadSeed(seed: string, size: number, kind?: BoardKind): void {
+  loadSeed(seed: string, size: number, kind?: BoardKind, rows = 0, cols = 0): void {
     const k = kind ?? this.kind();
     this.kind.set(k);
-    this.engine.loadLevel('seed', 0, seed, size, k);
+    this.engine.loadLevel('seed', 0, seed, size, k, rows, cols);
     this.afterLoad();
   }
 
@@ -370,7 +379,7 @@ export class FlowStore {
     if (done.length < DAILY_COUNT) return null;
     let sum = 0;
     for (let i = 1; i <= DAILY_COUNT; i++) {
-      const b = this.loadBestFor(dailySeed(date, i), DAILY_SIZES[i - 1]);
+      const b = this.loadBestFor(dailySeed(date, i), DAILY_SIZES[i - 1], DAILY_SIZES[i - 1]);
       if (!b) return null;
       sum += b.t;
     }
@@ -504,17 +513,18 @@ export class FlowStore {
     this.linked.set(`${e.connectedCount()}/${e.numPairs}`);
     this.size.set(e.size);
     const p = this.pack();
+    const dims = `${e.rows} \u00D7 ${e.cols}`;
     if (p) {
     this.title.set(`${p.name} \u00B7 ${this.packLevel()}`);
-    this.subtitle.set(`${e.size} \u00D7 ${e.size} \u00B7 ${e.numPairs} colors`);
+    this.subtitle.set(`${dims} \u00B7 ${e.numPairs} colors`);
     } else if (e.seed.startsWith('daily-')) {
       this.title.set('Daily Puzzle');
       const hex = e.topo.kind === 'hex' ? ' Hex' : '';
-      this.subtitle.set(`${e.size} \u00D7 ${e.size}${hex} \u00B7 ${e.seed.slice('daily-'.length)}`);
+      this.subtitle.set(`${dims}${hex} \u00B7 ${e.seed.slice('daily-'.length)}`);
     } else {
       this.title.set(e.topo.kind === 'hex' ? 'Custom Hex' : 'Custom');
       const sd = e.seed.length > 16 ? `${e.seed.slice(0, 15)}\u2026` : e.seed;
-      this.subtitle.set(`${e.size} \u00D7 ${e.size} \u00B7 ${sd}`);
+      this.subtitle.set(`${dims} \u00B7 ${sd}`);
     }
     if (e.won && e.win && !this.dialogRef) this.onWin();
     this.renderTick.update((v) => v + 1);
@@ -718,16 +728,17 @@ export class FlowStore {
   }
 
   private bestKey(): string {
-    return `flow.best.${this.engine.seed}.s${this.engine.size}`;
+    const e = this.engine;
+    return `flow.best.${e.seed}.s${e.rows}x${e.cols}`;
   }
 
   private loadBest(): Best | null {
-    return this.loadBestFor(this.engine.seed, this.engine.size);
+    return this.loadBestFor(this.engine.seed, this.engine.rows, this.engine.cols);
   }
 
-  private loadBestFor(seed: string, size: number): Best | null {
+  private loadBestFor(seed: string, rows: number, cols: number): Best | null {
     try {
-      const raw = localStorage.getItem(`flow.best.${seed}.s${size}`);
+      const raw = localStorage.getItem(`flow.best.${seed}.s${rows}x${cols}`);
       return raw ? (JSON.parse(raw) as Best) : null;
     } catch {
       return null;

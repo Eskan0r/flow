@@ -104,10 +104,10 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
       w = Math.floor(this.hexLay.w);
       h = Math.floor(this.hexLay.h);
     } else {
-      const side = Math.max(120, Math.floor(Math.min(availW, availH)));
+      const cell = Math.max(16, Math.floor(Math.min(availW / e.topo.cols, availH / e.topo.rows)));
       this.hexLay = null;
-      w = side;
-      h = side;
+      w = cell * e.topo.cols;
+      h = cell * e.topo.rows;
     }
     this.cssW = w;
     this.cssH = h;
@@ -125,8 +125,9 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
       const p = hexCellCenter(this.hexLay, r, c);
       return [p.x, p.y];
     }
-    const cell = this.cssW / e.topo.cols;
-    return [(c + 0.5) * cell, (r + 0.5) * cell];
+    const cellW = this.cssW / e.topo.cols;
+    const cellH = this.cssH / e.topo.rows;
+    return [(c + 0.5) * cellW, (r + 0.5) * cellH];
   }
 
   private draw(): void {
@@ -151,7 +152,7 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
       edge = s * 0.12;
     } else {
       this.drawSquareGrid(g);
-      const cell = this.cssW / e.topo.cols;
+      const cell = Math.min(this.cssW / e.topo.cols, this.cssH / e.topo.rows);
       pipeW = cell * 0.62;
       dotR = cell * 0.31;
       edge = 3;
@@ -209,23 +210,27 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
 
   private drawSquareGrid(g: CanvasRenderingContext2D): void {
     const e = this.store.engine;
-    const n = e.topo.cols;
-    const S = this.cssW;
-    const cell = S / n;
+    const cols = e.topo.cols;
+    const rows = e.topo.rows;
+    const cellW = this.cssW / cols;
+    const cellH = this.cssH / rows;
     g.strokeStyle = '#232323';
     g.lineWidth = 1;
     g.beginPath();
-    for (let i = 1; i < n; i++) {
-      const p = Math.round(i * cell) + 0.5;
+    for (let i = 1; i < cols; i++) {
+      const p = Math.round(i * cellW) + 0.5;
       g.moveTo(p, 0);
-      g.lineTo(p, S);
+      g.lineTo(p, this.cssH);
+    }
+    for (let i = 1; i < rows; i++) {
+      const p = Math.round(i * cellH) + 0.5;
       g.moveTo(0, p);
-      g.lineTo(S, p);
+      g.lineTo(this.cssW, p);
     }
     g.stroke();
     g.strokeStyle = '#3d3d3d';
     g.lineWidth = 2;
-    g.strokeRect(1, 1, S - 2, S - 2);
+    g.strokeRect(1, 1, this.cssW - 2, this.cssH - 2);
   }
 
   private drawHexGrid(g: CanvasRenderingContext2D): void {
@@ -259,9 +264,10 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
     if (e.topo.kind === 'hex' && this.hexLay) {
       return hexPixelToCell(this.hexLay, e.topo.rows, e.topo.cols, x, y);
     }
-    const cell = rect.width / e.topo.cols;
-    const c = Math.floor(x / cell);
-    const r = Math.floor(y / cell);
+    const cellW = rect.width / e.topo.cols;
+    const cellH = rect.height / e.topo.rows;
+    const c = Math.floor(x / cellW);
+    const r = Math.floor(y / cellH);
     if (!e.inBounds(r, c)) return null;
     return [r, c];
   }

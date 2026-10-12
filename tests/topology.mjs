@@ -2,7 +2,7 @@
  * hex pixel round-trips. Run: node ... tests/topology.mjs
  */
 import {
-  hexCellCenter, hexLayout, hexPixelToCell, hexTopology, squareTopology,
+  hexCellCenter, hexLayout, hexPixelToCell, hexTopology, rectTopology, squareTopology,
 } from '../src/app/core/topology.ts';
 import { buildSnake } from '../src/app/core/flow-generator.ts';
 
@@ -92,6 +92,33 @@ section('hex collinearity');
   // axial straight line (constant q): stairs down-right in offset coords
   ok(t.collinear([[0, 2], [1, 2], [2, 3], [3, 3]]), 'hex diagonal line collinear');
   ok(!t.collinear([[2, 2], [2, 3], [3, 3]]), 'hex bend not collinear');
+}
+
+section('rectangular topology');
+{
+  const t = rectTopology(5, 8);
+  ok(t.total === 40, 'rect total = rows x cols');
+  ok(t.rows === 5 && t.cols === 8, 'rect rows/cols exposed');
+  ok(t.neighbors(2, 2).length === 4, 'rect interior has 4 neighbors');
+  ok(t.neighbors(2, 7).length === 3, 'rect right edge has 3 neighbors');
+  ok(t.key(3, 0) === 24 && t.key(4, 7) === 39, 'key stride is cols');
+  ok(t.inBounds(4, 7) && !t.inBounds(5, 0) && !t.inBounds(0, 8), 'rect bounds by rows/cols');
+  ok(t.distance([0, 0], [4, 7]) === 11, 'rect Manhattan distance');
+  ok(JSON.stringify(t.stepOptions([0, 0], [4, 7])) === JSON.stringify([[0, 1], [1, 0]]), 'rect greedy walk starts east (larger delta axis)');
+  let badWalk = 0;
+  for (let r = 0; r < 5 && badWalk < 3; r++) {
+    for (let c = 0; c < 8 && badWalk < 3; c++) {
+      let cur = [0, 0];
+      let guard = 50;
+      while ((cur[0] !== r || cur[1] !== c) && guard-- > 0) {
+        const opts = t.stepOptions(cur, [r, c]);
+        if (!opts.length) { badWalk++; break; }
+        cur = opts[0];
+      }
+    }
+  }
+  ok(badWalk === 0, 'rect greedy walks terminate');
+  ok(squareTopology(6).total === 36 && squareTopology(6).cols === 6, 'square delegates to rect');
 }
 
 section('snake validity on both topologies');

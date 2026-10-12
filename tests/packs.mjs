@@ -13,19 +13,23 @@ function section(t) { console.log('\n== ' + t + ' =='); }
 
 section('pack definitions');
 {
-  ok(PACKS.length === 3, `regular, bonus, hexes packs (got ${PACKS.length})`);
+  ok(PACKS.length === 4, `regular, bonus, hexes, rectangles packs (got ${PACKS.length})`);
   const ids = PACKS.map((p) => p.id);
   ok(new Set(ids).size === ids.length, 'pack ids unique');
   for (const p of PACKS) {
     ok(p.count >= 60, `${p.id}: at least 60 levels (got ${p.count})`);
     let badSize = 0;
+    let badShape = 0;
     const seeds = new Set();
     for (let n = 1; n <= p.count; n++) {
       const s = p.sizeForLevel(n);
       if (s < 5 || s > 10) badSize++;
+      const { rows, cols } = p.shapeForLevel(n);
+      if (rows < 4 || rows > 10 || cols < 4 || cols > 10) badShape++;
       seeds.add(p.seedForLevel(n));
     }
     ok(badSize === 0, `${p.id}: all sizes in 5..10`);
+    ok(badShape === 0, `${p.id}: all shapes in 4..10`);
     ok(seeds.size === p.count, `${p.id}: seeds unique per level`);
   }
   const reg = PACKS.find((p) => p.id === 'regular');
@@ -41,6 +45,10 @@ section('pack definitions');
   const hex = PACKS.find((p) => p.id === 'hexes');
   ok(!!hex && hex.kind === 'hex' && hex.count === 60, 'hexes pack: 60 hex levels');
   ok(!!hex && hex.sizeForLevel(1) === 5 && hex.sizeForLevel(60) === 7, 'hexes pack ramps 5 to 7');
+  const rect = PACKS.find((p) => p.id === 'rectangles');
+  ok(!!rect && rect.kind === 'square' && rect.count === 60, 'rectangles pack: 60 square levels');
+  ok(JSON.stringify(rect.shapeForLevel(1)) === JSON.stringify({ rows: 5, cols: 7 }), 'rectangles: wide 5x7 start');
+  ok(JSON.stringify(rect.shapeForLevel(60)) === JSON.stringify({ rows: 8, cols: 10 }), 'rectangles: 8x10 end');
 }
 
 section('pack levels generate valid puzzles');
@@ -53,8 +61,13 @@ section('pack levels generate valid puzzles');
   let bad = 0, badShape = 0, cleanCount = 0;
   for (const [p, n] of picks) {
     const size = p.sizeForLevel(n);
+    const shape = p.shapeForLevel(n);
     const lv = generateLevel(p.seedForLevel(n), size, null,
-      p.kind === 'hex' ? { kind: 'hex', rows: size, cols: size } : {});
+      { kind: p.kind, rows: shape.rows, cols: shape.cols });
+    if (lv.rows !== shape.rows || lv.cols !== shape.cols) {
+      bad++;
+      console.error(`  FAIL-SHAPE: ${p.id} #${n}: got ${lv.rows}x${lv.cols}, want ${shape.rows}x${shape.cols}`);
+    }
     const v = validateLevel(lv);
     if (!v.ok) { bad++; console.error(`  FAIL: ${p.id} #${n}: ${v.errors.slice(0, 2).join(' | ')}`); }
     else if (lv.stats.borderStraight > 0 || lv.stats.straights > (p.kind === 'hex' ? 3 : 1) ||

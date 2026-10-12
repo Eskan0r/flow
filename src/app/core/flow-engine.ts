@@ -4,7 +4,7 @@
 
 import { defaultHexPairs, defaultPairsForSize, generateLevel, validateLevel } from './flow-generator';
 import type { Cell } from './flow-generator';
-import { hexTopology, squareTopology } from './topology';
+import { hexTopology, rectTopology, squareTopology } from './topology';
 import type { BoardKind, Topology } from './topology';
 
 export type PlayMode = 'level' | 'seed';
@@ -66,7 +66,11 @@ export class FlowEngine {
   mode: PlayMode = 'level';
   levelNum = 1;
   seed = 'flow-level-1';
+  /** Nominal board dimension (max of rows/cols), used for pair density. */
   size = 5;
+  /** Actual square-board geometry. Equal to `size` unless the board is rectangular. */
+  rows = 5;
+  cols = 5;
   numPairs = 4;
   pairs: [Cell, Cell][] = [];
   solution: Cell[][] = [];
@@ -104,7 +108,7 @@ export class FlowEngine {
     return this.topo.inBounds(r, c);
   }
 
-  loadLevel(mode: PlayMode, levelNum = 1, seed = '', size = 7, kind: BoardKind = 'square'): void {
+  loadLevel(mode: PlayMode, levelNum = 1, seed = '', size = 7, kind: BoardKind = 'square', rows = 0, cols = 0): void {
     this.mode = mode;
     if (mode === 'level') {
       this.levelNum = levelNum;
@@ -114,14 +118,20 @@ export class FlowEngine {
       this.seed = seed;
       this.size = size;
     }
-    this.topo = kind === 'hex' ? hexTopology(this.size, this.size) : squareTopology(this.size);
+    // Rectangular square boards pass explicit rows/cols; hex boards always
+    // receive both from the caller. Default to `size x size`.
+    this.rows = rows > 0 ? rows : this.size;
+    this.cols = cols > 0 ? cols : this.size;
+    this.topo = kind === 'hex'
+      ? hexTopology(this.rows, this.cols)
+      : rectTopology(this.rows, this.cols);
     this.numPairs = kind === 'hex'
-      ? defaultHexPairs(this.topo.rows, this.topo.cols)
-      : defaultPairsForSize(this.size);
+      ? defaultHexPairs(this.rows, this.cols)
+      : defaultPairsForSize(Math.max(this.rows, this.cols));
 
-    let lv = generateLevel(this.seed, this.size, this.numPairs, { kind, rows: this.topo.rows, cols: this.topo.cols });
+    let lv = generateLevel(this.seed, Math.max(this.rows, this.cols), this.numPairs, { kind, rows: this.rows, cols: this.cols });
     for (let t = 1; t < 6 && !validateLevel(lv, this.topo).ok; t++) {
-      lv = generateLevel(`${this.seed}#${t}`, this.size, this.numPairs, { kind, rows: this.topo.rows, cols: this.topo.cols });
+      lv = generateLevel(`${this.seed}#${t}`, Math.max(this.rows, this.cols), this.numPairs, { kind, rows: this.rows, cols: this.cols });
       if (validateLevel(lv, this.topo).ok) this.seed = `${this.seed}#${t}`;
     }
     this.pairs = lv.pairs;

@@ -105,6 +105,34 @@ section('edge cases');
   ok(badShape === 0, `200 fuzz seeds: all clean-shaped (badShape=${badShape})`);
 }
 
+section('rectangular grids generate + validate');
+{
+  const shapes = [[5, 7], [6, 8], [8, 10], [8, 6]];
+  const thin = [[4, 9]];
+  let bad = 0, badShape = 0, badDims = 0;
+  for (const [rows, cols] of shapes) {
+    for (const seed of ['rect-a', 'rect-b', 'rect-c']) {
+      const want = defaultPairsForSize(Math.max(rows, cols));
+      const lv = generateLevel(seed, Math.max(rows, cols), null, { rows, cols });
+      if (!validateLevel(lv).ok) { bad++; console.error(`  FAIL: ${seed} ${rows}x${cols}`); continue; }
+      if (lv.rows !== rows || lv.cols !== cols) badDims++;
+      if (lv.pairs.length !== want) bad++;
+      if (lv.stats.straights > 1 || lv.stats.borderStraight > 0 || lv.stats.tier !== 'clean') badShape++;
+    }
+  }
+  ok(bad === 0, 'all rect samples valid');
+  ok(badDims === 0, 'rect generation respects rows/cols');
+  ok(badShape === 0, 'normal rect shapes clean-shaped');
+  // Very thin boards can legitimately relax straights; still solvable + valid.
+  for (const [rows, cols] of thin) {
+    for (const seed of ['rect-a', 'rect-b', 'rect-c']) {
+      const lv = generateLevel(seed, Math.max(rows, cols), null, { rows, cols });
+      if (!validateLevel(lv).ok || lv.stats.tier === 'dirty') { bad++; console.error(`  FAIL-thin: ${seed} ${rows}x${cols}`); }
+    }
+  }
+  ok(bad === 0, 'thin rect boards still valid (may relax shape)');
+}
+
 console.log(`\n----------------------------------------\nGENERATOR: PASS ${pass} · FAIL ${fail}`);
 if (fail) {
   failures.slice(0, 20).forEach((f) => console.log(' - ' + f));

@@ -6,7 +6,7 @@
 
 export type Cell = [number, number];
 
-import { hexTopology, squareTopology } from './topology';
+import { hexTopology, rectTopology } from './topology';
 import type { BoardKind, Topology } from './topology';
 import { carveLevel } from './carve';
 
@@ -255,8 +255,7 @@ export function defaultHexPairs(rows: number, cols: number): number {
   return Math.min(12, Math.max(4, Math.round((rows * cols) / 5)));
 }
 
-export function lengthBounds(size: number, numPairs: number): { minLen: number; maxLen: number; avg: number } {
-  const total = size * size;
+export function lengthBounds(size: number, numPairs: number, total = size * size): { minLen: number; maxLen: number; avg: number } {
   const avg = total / numPairs;
   return { minLen: Math.max(4, Math.floor(avg * 0.5)), maxLen: Math.ceil(avg * 1.7), avg };
 }
@@ -376,11 +375,12 @@ export function generateLevel(
   K = Math.max(2, Math.min(14, K));
 
   // Square keeps the legacy namespace; hex gets its own so the two can
-  // never collide on the same seed string.
+  // never collide on the same seed string. Rectangular square boards use
+  // `rows x cols`, which equals `size x size` for square boards.
   const rng = kind === 'hex'
     ? seededRng(`${String(seedString)}::hex:${rows}x${cols}:${K}`)
-    : seededRng(`${String(seedString)}::${size}x${size}:${K}`);
-  const topo: Topology = kind === 'hex' ? hexTopology(rows, cols) : squareTopology(size);
+    : seededRng(`${String(seedString)}::${rows}x${cols}:${K}`);
+  const topo: Topology = kind === 'hex' ? hexTopology(rows, cols) : rectTopology(rows, cols);
   const total = topo.total;
   const timeBudgetMs = opts.timeBudgetMs ?? 1400;
   const maxPaths = opts.maxPaths ?? 70;
@@ -442,7 +442,7 @@ export function generateLevel(
     // board still comes back (loadLevel retries with fresh seeds anyway).
   }
 
-  const { minLen, maxLen } = lengthBounds(Math.max(rows, cols), K);
+  const { minLen, maxLen } = lengthBounds(Math.max(rows, cols), K, total);
 
   let bestClean: Candidate | null = null;
   let bestRelaxed: Candidate | null = null;
@@ -569,7 +569,7 @@ export function validateLevel(level: FlowLevel, topo?: Topology): ValidationResu
   const { size, numPairs, pairs, solution } = level;
   const t = topo ?? (level.kind === 'hex'
     ? hexTopology(level.rows ?? size, level.cols ?? size)
-    : squareTopology(size));
+    : rectTopology(level.rows ?? size, level.cols ?? size));
   const { rows, cols } = t;
   const total = t.total;
   if (!pairs || pairs.length !== numPairs) errors.push(`pairs length ${pairs && pairs.length} != ${numPairs}`);

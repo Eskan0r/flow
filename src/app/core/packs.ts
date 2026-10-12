@@ -11,6 +11,8 @@ export interface Pack {
   kind: BoardKind;
   count: number;
   sizeForLevel(n: number): number;
+  /** Board geometry. Equals { rows: size, cols: size } for square packs. */
+  shapeForLevel(n: number): { rows: number; cols: number };
   seedForLevel(n: number): string;
 }
 
@@ -19,8 +21,18 @@ function band(n: number, bands: Array<[number, number]>): number {
   return bands[bands.length - 1][1];
 }
 
+function squareShape(n: number, sizeForLevel: (n: number) => number): { rows: number; cols: number } {
+  const s = sizeForLevel(n);
+  return { rows: s, cols: s };
+}
+
+/** A square/hex pack: shape always mirrors the nominal size. */
+function uniformPack(base: Omit<Pack, 'shapeForLevel'>): Pack {
+  return { ...base, shapeForLevel: (n) => squareShape(n, base.sizeForLevel) };
+}
+
 export const PACKS: Pack[] = [
-  {
+  uniformPack({
     id: 'regular',
     name: 'Regular Pack',
     desc: '5x5 to 9x9 boards',
@@ -29,8 +41,8 @@ export const PACKS: Pack[] = [
     count: 150,
     sizeForLevel: (n) => band(n, [[12, 5], [40, 6], [80, 7], [115, 8], [150, 9]]),
     seedForLevel: (n) => `flow-regular-${n}`,
-  },
-  {
+  }),
+  uniformPack({
     id: 'bonus',
     name: 'Bonus Pack',
     desc: '5x5 to 9x9 boards',
@@ -39,8 +51,8 @@ export const PACKS: Pack[] = [
     count: 150,
     sizeForLevel: (n) => band(n, [[10, 5], [35, 6], [75, 7], [115, 8], [150, 9]]),
     seedForLevel: (n) => `flow-bonus-${n}`,
-  },
-  {
+  }),
+  uniformPack({
     id: 'hexes',
     name: 'Hexes',
     desc: 'Hexagonal tiles, 5x5 to 7x7',
@@ -49,6 +61,17 @@ export const PACKS: Pack[] = [
     count: 60,
     sizeForLevel: (n) => band(n, [[15, 5], [40, 6], [60, 7]]),
     seedForLevel: (n) => `flow-hexes-${n}`,
+  }),
+  {
+    id: 'rectangles',
+    name: 'Rectangles',
+    desc: 'Wide 5x7 to 8x10 boards',
+    color: '#0891b2',
+    kind: 'square',
+    count: 60,
+    sizeForLevel: (n) => band(n, [[20, 7], [40, 8], [60, 10]]),
+    shapeForLevel: (n) => (n <= 20 ? { rows: 5, cols: 7 } : n <= 40 ? { rows: 6, cols: 8 } : { rows: 8, cols: 10 }),
+    seedForLevel: (n) => `flow-rectangles-${n}`,
   },
 ];
 
