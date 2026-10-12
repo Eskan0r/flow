@@ -271,6 +271,35 @@ section('rectangular boards play end to end');
   ok(s.rows === 7 && s.cols === 7 && s.topo.total === 49, 'square default rows/cols = size');
 }
 
+section('masked (polyomino) boards play end to end');
+{
+  const e = new FlowEngine();
+  const mask = (r, c) => !(r >= 1 && r <= 4 && c >= 2 && c <= 4); // 7x7 U/notched
+  e.loadLevel('seed', 0, 'polyplay-test', 7, 'square', 7, 7, mask);
+  ok(e.topo.cells === 37 && e.topo.total === 49, 'mask counts playable cells');
+  ok(e.filledCount() === e.numPairs * 2, 'only endpoints filled initially');
+  ok(!e.inBounds(3, 3), 'hole cell is not playable');
+  e.solution.forEach((sg) => drawPath(e, sg));
+  ok(e.won, 'masked board won by drawing all solutions');
+  ok(e.filledPct() === 100, 'masked board 100% filled (hole cells excluded)');
+  ok(e.win && (e.win.stars === 3 || e.win.stars === 1), 'masked win graded');
+}
+
+section('wall boards play end to end');
+{
+  const e = new FlowEngine();
+  const wall = (r, c) => (r === 3 && Math.abs(c - 3) <= 1) || (c === 3 && Math.abs(r - 3) <= 1);
+  const mask = (r, c) => !wall(r, c);
+  e.loadLevel('seed', 0, 'wallplay-test', 7, 'square', 7, 7, mask, wall);
+  ok(e.topo.cells === 44, 'wall board counts playable cells');
+  ok(!!e.walls && e.walls(3, 3) && !e.mask(3, 3), 'engine keeps the walls hint and blocks wall cells');
+  ok(!e.inBounds(3, 3), 'wall cell is not playable');
+  e.solution.forEach((sg) => drawPath(e, sg));
+  ok(e.won, 'wall board won by drawing all solutions');
+  ok(e.filledPct() === 100, 'wall board 100% filled (wall cells excluded)');
+  ok(e.win && (e.win.stars === 3 || e.win.stars === 1), 'wall win graded');
+}
+
 console.log(`\n----------------------------------------\nENGINE: PASS ${pass} · FAIL ${fail}`);
 if (fail) process.exit(1);
 else console.log('ALL ENGINE CHECKS PASSED');

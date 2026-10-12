@@ -4,8 +4,8 @@
 
 import { defaultHexPairs, defaultPairsForSize, generateLevel, validateLevel } from './flow-generator';
 import type { Cell } from './flow-generator';
-import { hexTopology, rectTopology, squareTopology } from './topology';
-import type { BoardKind, Topology } from './topology';
+import { hexTopology, maskTopology, rectTopology, squareTopology } from './topology';
+import type { BoardKind, Mask, Topology } from './topology';
 
 export type PlayMode = 'level' | 'seed';
 
@@ -71,6 +71,10 @@ export class FlowEngine {
   /** Actual square-board geometry. Equal to `size` unless the board is rectangular. */
   rows = 5;
   cols = 5;
+  /** Optional shape mask (polyomino / wall boards). */
+  mask: Mask | undefined = undefined;
+  /** Optional interior wall cells (rendering hint; subset of blocked cells). */
+  walls: Mask | undefined = undefined;
   numPairs = 4;
   pairs: [Cell, Cell][] = [];
   solution: Cell[][] = [];
@@ -108,7 +112,7 @@ export class FlowEngine {
     return this.topo.inBounds(r, c);
   }
 
-  loadLevel(mode: PlayMode, levelNum = 1, seed = '', size = 7, kind: BoardKind = 'square', rows = 0, cols = 0): void {
+  loadLevel(mode: PlayMode, levelNum = 1, seed = '', size = 7, kind: BoardKind = 'square', rows = 0, cols = 0, mask: Mask | null = null, walls: Mask | null = null): void {
     this.mode = mode;
     if (mode === 'level') {
       this.levelNum = levelNum;
@@ -122,16 +126,25 @@ export class FlowEngine {
     // receive both from the caller. Default to `size x size`.
     this.rows = rows > 0 ? rows : this.size;
     this.cols = cols > 0 ? cols : this.size;
+    this.mask = kind === 'square' && mask ? mask : undefined;
+    this.walls = kind === 'square' && this.mask && walls ? walls : undefined;
     this.topo = kind === 'hex'
       ? hexTopology(this.rows, this.cols)
-      : rectTopology(this.rows, this.cols);
-    this.numPairs = kind === 'hex'
+      : this.mask
+        ? maskTopology(this.rows, this.cols, this.mask, this.walls)
+        : rectTopology(this.rows, this.cols);
+    // Masked shapes pick their own density inside generateLevel (pass null).
+    const genPairs = kind === 'hex'
       ? defaultHexPairs(this.rows, this.cols)
-      : defaultPairsForSize(Math.max(this.rows, this.cols));
+      : this.mask
+        ? null
+        : defaultPairsForSize(Math.max(this.rows, this.cols));
+    this.numPairs = genPairs ?? defaultPairsForSize(Math.max(this.rows, this.cols));
+    const opts = { kind, rows: this.rows, cols: this.cols, mask: this.mask, walls: this.walls };
 
-    let lv = generateLevel(this.seed, Math.max(this.rows, this.cols), this.numPairs, { kind, rows: this.rows, cols: this.cols });
+    let lv = generateLevel(this.seed, Math.max(this.rows, this.cols), genPairs, opts);
     for (let t = 1; t < 6 && !validateLevel(lv, this.topo).ok; t++) {
-      lv = generateLevel(`${this.seed}#${t}`, Math.max(this.rows, this.cols), this.numPairs, { kind, rows: this.rows, cols: this.cols });
+      lv = generateLevel(`${this.seed}#${t}`, Math.max(this.rows, this.cols), genPairs, opts);
       if (validateLevel(lv, this.topo).ok) this.seed = `${this.seed}#${t}`;
     }
     this.pairs = lv.pairs;
@@ -192,7 +205,7 @@ export class FlowEngine {
   }
 
   filledPct(): number {
-    return Math.round((this.filledCount() / this.topo.total) * 100);
+    return Math.round((this.filledCount() / this.topo.cells) * 100);
   }
 
   connectedCount(): number {
@@ -467,7 +480,7 @@ export class FlowEngine {
   checkWin(): boolean {
     if (this.won) return true;
     if (!this.done.every(Boolean)) return false;
-    if (this.filledCount() !== this.topo.total) return false;
+    if (this.filledCount() !== this.topo.cells) return false;
     this.won = true;
     const perfect = this.moves <= this.numPairs && this.hints === 0;
     this.win = { moves: this.moves, hints: this.hints, perfect, stars: perfect ? 3 : 1 };

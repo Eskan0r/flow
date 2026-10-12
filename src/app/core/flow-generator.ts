@@ -6,8 +6,8 @@
 
 export type Cell = [number, number];
 
-import { hexTopology, rectTopology } from './topology';
-import type { BoardKind, Topology } from './topology';
+import { hexTopology, maskTopology, rectTopology } from './topology';
+import type { BoardKind, Mask, Topology } from './topology';
 import { carveLevel } from './carve';
 
 export interface FlowLevel {
@@ -19,6 +19,10 @@ export interface FlowLevel {
   kind?: BoardKind;
   rows?: number;
   cols?: number;
+  /** Shape mask used to build this level (masked square boards only). */
+  mask?: Mask;
+  /** Interior wall cells (rendering hint; subset of the blocked cells). */
+  walls?: Mask;
 }
 
 export interface LevelStats {
@@ -255,6 +259,17 @@ export function defaultHexPairs(rows: number, cols: number): number {
   return Math.min(12, Math.max(4, Math.round((rows * cols) / 5)));
 }
 
+/** Masked-shape density: carve ~6-cell flows over playable cells. */
+export function maskDefaultPairs(cells: number): number {
+  return Math.max(2, Math.min(12, Math.round(cells / 6)));
+}
+
+export function countMask(mask: Mask, rows: number, cols: number): number {
+  let n = 0;
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) if (mask(r, c)) n++;
+  return n;
+}
+
 export function lengthBounds(size: number, numPairs: number, total = size * size): { minLen: number; maxLen: number; avg: number } {
   const avg = total / numPairs;
   return { minLen: Math.max(4, Math.floor(avg * 0.5)), maxLen: Math.ceil(avg * 1.7), avg };
@@ -343,6 +358,10 @@ export interface GenerateOptions {
   kind?: BoardKind;
   rows?: number;
   cols?: number;
+  /** Shape mask (plays like a square board restricted to `mask` cells). */
+  mask?: Mask;
+  /** Interior wall cells (must be a subset of the blocked cells). */
+  walls?: Mask;
 }
 
 interface Candidate {
@@ -371,25 +390,63 @@ export function generateLevel(
   const kind: BoardKind = opts.kind ?? 'square';
   const rows = Math.min(12, Math.max(4, opts.rows ?? size));
   const cols = Math.min(12, Math.max(4, opts.cols ?? size));
-  let K = numPairs ?? (kind === 'hex' ? defaultHexPairs(rows, cols) : defaultPairsForSize(size));
+  const masked = kind !== 'hex' && opts.mask !== undefined;
+  const cells = masked ? countMask(opts.mask as Mask, rows, cols) : 0;
+  let K = numPairs
+    ?? (kind === 'hex' ? defaultHexPairs(rows, cols)
+      : masked ? maskDefaultPairs(cells)
+      : defaultPairsForSize(size));
   K = Math.max(2, Math.min(14, K));
 
   // Square keeps the legacy namespace; hex gets its own so the two can
   // never collide on the same seed string. Rectangular square boards use
-  // `rows x cols`, which equals `size x size` for square boards.
+  // `rows x cols`, which equals `size x size` for square boards; masked
+  // boards carve under their own namespace so they can't collide either.
   const rng = kind === 'hex'
     ? seededRng(`${String(seedString)}::hex:${rows}x${cols}:${K}`)
-    : seededRng(`${String(seedString)}::${rows}x${cols}:${K}`);
-  const topo: Topology = kind === 'hex' ? hexTopology(rows, cols) : rectTopology(rows, cols);
+    : masked
+      ? seededRng(`${String(seedString)}::mask:${rows}x${cols}:${K}`)
+      : seededRng(`${String(seedString)}::${rows}x${cols}:${K}`);
+  const topo: Topology = kind === 'hex'
+    ? hexTopology(rows, cols)
+    : masked
+      ? maskTopology(rows, cols, opts.mask as Mask, opts.walls)
+      : rectTopology(rows, cols);
   const total = topo.total;
   const timeBudgetMs = opts.timeBudgetMs ?? 1400;
   const maxPaths = opts.maxPaths ?? 70;
 
-  // Hex boards carve instead of cutting: Hamiltonian partitions tangle on
-  // degree-6 grids, while sequential carving stays clean (see carve.ts).
-  // Several salted attempts; the last drops the straight-count cap (but
-  // never the border veto or validity gates).
-  if (kind === 'hex') {
+  // Hex and masked boards carve instead of cutting: Hamiltonian partitions
+  // tangle on degree-6 grids and non-rectangular shapes, while sequential
+  // carving stays clean (see carve.ts). Several salted attempts; the last
+  // drops the straight-count cap (but never the border veto or validity).
+  // Thin/non-convex masks need a deeper carve search than hex.
+  const tuning = masked ? { triesPerFlow: 30, pathBudget: 1500 } : {};
+  const mkLevel = (carved: NonNullable<ReturnType<typeof carveLevel>>, info: ReturnType<typeof analyzeCut>, tier: 'clean' | 'relaxed' | 'dirty') => ({
+    seed: String(seedString),
+    size,
+    numPairs: carved.solution.length,
+    kind,
+    rows,
+    cols,
+    mask: topo.mask,
+    walls: topo.walls,
+    pairs: carved.pairs,
+    solution: carved.solution,
+    stats: {
+      minLen: info.minL, maxLen: info.maxL, avgLen: +info.avgL.toFixed(2),
+      minD: info.minD, minRatio: +info.minRatio.toFixed(3),
+      avgDetour: +info.avgDetour.toFixed(2), maxDetour: info.maxDetour,
+      touches: info.touches, mono2x2: info.mono2x2,
+      borderBoth: info.borderBoth, straights: info.straights,
+      borderStraight: info.borderStraight,
+      overlapCells: info.overlapCells, score: +info.score.toFixed(3),
+      ms: Date.now() - t0,
+      tier,
+    },
+  });
+  let maskBestEffort: ReturnType<typeof mkLevel> | null = null;
+  if (kind === 'hex' || masked) {
     const salts: Array<{ salt: string; relax: boolean; budget: number }> = [
       { salt: '', relax: false, budget: timeBudgetMs },
       { salt: '#c2', relax: false, budget: 900 },
@@ -398,11 +455,13 @@ export function generateLevel(
       { salt: '#c5', relax: false, budget: 700 },
       { salt: '#c6', relax: true, budget: 700 },
     ];
+    // Thin/non-convex masks need a deeper carve search than hex.
     for (const a of salts) {
       const carved = carveLevel(String(seedString), topo, K, {
         timeBudgetMs: a.budget,
         salt: a.salt,
         relaxShape: a.relax,
+        ...tuning,
       });
       if (!carved) continue;
       const info = analyzeCut(
@@ -411,35 +470,39 @@ export function generateLevel(
         carved.solution.map((sg) => sg.length),
       );
       if (info.touches !== 0 || info.mono2x2 !== 0) continue;
+      if (masked && !maskBestEffort) maskBestEffort = mkLevel(carved, info, 'relaxed');
       if (a.relax) {
         if (info.borderStraight > 0 || info.straights > 3) continue;
       } else if (info.straights > 1 || info.borderStraight > 0) {
         continue;
       }
-      return {
-        seed: String(seedString),
-        size,
-        numPairs: carved.solution.length,
-        kind,
-        rows,
-        cols,
-        pairs: carved.pairs,
-        solution: carved.solution,
-        stats: {
-          minLen: info.minL, maxLen: info.maxL, avgLen: +info.avgL.toFixed(2),
-          minD: info.minD, minRatio: +info.minRatio.toFixed(3),
-          avgDetour: +info.avgDetour.toFixed(2), maxDetour: info.maxDetour,
-          touches: info.touches, mono2x2: info.mono2x2,
-          borderBoth: info.borderBoth, straights: info.straights,
-          borderStraight: info.borderStraight,
-          overlapCells: info.overlapCells, score: +info.score.toFixed(3),
-          ms: Date.now() - t0,
-          tier: a.relax ? 'relaxed' : 'clean',
-        },
-      };
+      return mkLevel(carved, info, a.relax ? 'relaxed' : 'clean');
     }
-    // Vanishingly rare: fall through to the cut pipeline below so a solvable
-    // board still comes back (loadLevel retries with fresh seeds anyway).
+    // Vanishingly rare for hex: fall through to the cut pipeline below so a
+    // solvable board still comes back (loadLevel retries with fresh seeds).
+  }
+  if (masked) {
+    // The cut pipeline below builds snakes over the full bounding rectangle,
+    // which would walk through masked-out cells. Masks rely on carve only:
+    // retry across nearby pair counts (both denser and coarser) with a deep
+    // search and the shape cap relaxed. `throw` is a last resort for shapes
+    // that are genuinely uncarvable (loadLevel retries with fresh seeds).
+    const alt = [K - 1, K + 1, K - 2, K + 2, K - 3, K + 3].filter((k) => k >= 3 && k <= 14);
+    for (const k of alt) {
+      const carved = carveLevel(String(seedString), topo, k, { timeBudgetMs: 1200, relaxShape: true, ...tuning });
+      if (!carved) continue;
+      const info = analyzeCut(
+        carved.solution.flat(),
+        topo,
+        carved.solution.map((sg) => sg.length),
+      );
+      if (info.touches !== 0 || info.mono2x2 !== 0) continue;
+      return mkLevel(carved, info, 'relaxed');
+    }
+    // A wall/odd board can force more straights than the clean cap allows;
+    // accept the valid carve at the default density before giving up.
+    if (maskBestEffort) return maskBestEffort;
+    throw new Error(`mask carve failed for seed ${JSON.stringify(String(seedString))} (${rows}x${cols})`);
   }
 
   const { minLen, maxLen } = lengthBounds(Math.max(rows, cols), K, total);
@@ -569,7 +632,9 @@ export function validateLevel(level: FlowLevel, topo?: Topology): ValidationResu
   const { size, numPairs, pairs, solution } = level;
   const t = topo ?? (level.kind === 'hex'
     ? hexTopology(level.rows ?? size, level.cols ?? size)
-    : rectTopology(level.rows ?? size, level.cols ?? size));
+    : level.mask
+      ? maskTopology(level.rows ?? size, level.cols ?? size, level.mask)
+      : rectTopology(level.rows ?? size, level.cols ?? size));
   const { rows, cols } = t;
   const total = t.total;
   if (!pairs || pairs.length !== numPairs) errors.push(`pairs length ${pairs && pairs.length} != ${numPairs}`);
@@ -601,7 +666,7 @@ export function validateLevel(level: FlowLevel, topo?: Topology): ValidationResu
     if (t.distance(pa, pb) <= 1) errors.push(`pair ${s} endpoints adjacent (D=${t.distance(pa, pb)})`);
     if (sg.length < 4) errors.push(`pair ${s} too short (L=${sg.length})`);
   }
-  if (seen.size !== total) errors.push(`coverage ${seen.size}/${total}`);
+  if (seen.size !== t.cells) errors.push(`coverage ${seen.size}/${t.cells}`);
 
   const segGrid: number[][] = Array.from({ length: rows }, () => new Array<number>(cols).fill(-1));
   solution.forEach((sg, s) => sg.forEach(([r, c]) => { segGrid[r][c] = s; }));

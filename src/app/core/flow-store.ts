@@ -190,7 +190,9 @@ export class FlowStore {
     this.kind.set(p.kind);
     this.seedInput.set('');
     const { rows, cols } = p.shapeForLevel(level);
-    this.engine.loadLevel('seed', 0, p.seedForLevel(level), p.sizeForLevel(level), p.kind, rows, cols);
+    const mask = p.maskForLevel ? p.maskForLevel(level) : null;
+    const walls = p.wallsForLevel ? p.wallsForLevel(level) : null;
+    this.engine.loadLevel('seed', 0, p.seedForLevel(level), p.sizeForLevel(level), p.kind, rows, cols, mask, walls);
     this.view.set('game');
     this.afterLoad();
     if (announce) this.sound.click();

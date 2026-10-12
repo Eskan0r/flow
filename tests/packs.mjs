@@ -13,7 +13,7 @@ function section(t) { console.log('\n== ' + t + ' =='); }
 
 section('pack definitions');
 {
-  ok(PACKS.length === 4, `regular, bonus, hexes, rectangles packs (got ${PACKS.length})`);
+  ok(PACKS.length === 6, `regular, bonus, hexes, rectangles, oddshapes, walls packs (got ${PACKS.length})`);
   const ids = PACKS.map((p) => p.id);
   ok(new Set(ids).size === ids.length, 'pack ids unique');
   for (const p of PACKS) {
@@ -49,6 +49,36 @@ section('pack definitions');
   ok(!!rect && rect.kind === 'square' && rect.count === 60, 'rectangles pack: 60 square levels');
   ok(JSON.stringify(rect.shapeForLevel(1)) === JSON.stringify({ rows: 5, cols: 7 }), 'rectangles: wide 5x7 start');
   ok(JSON.stringify(rect.shapeForLevel(60)) === JSON.stringify({ rows: 8, cols: 10 }), 'rectangles: 8x10 end');
+  const odd = PACKS.find((p) => p.id === 'oddshapes');
+  ok(!!odd && odd.kind === 'square' && odd.count === 60 && !!odd.maskForLevel, 'oddshapes pack: 60 masked levels');
+  let oddBad = 0;
+  for (let n = 1; n <= odd.count; n++) {
+    const { rows, cols } = odd.shapeForLevel(n);
+    const mask = odd.maskForLevel(n);
+    let cells = 0;
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) if (mask(r, c)) cells++;
+    if (cells < 16) oddBad++;
+  }
+  ok(oddBad === 0, 'oddshapes masks all have >=16 cells');
+  const walls = PACKS.find((p) => p.id === 'walls');
+  ok(!!walls && walls.kind === 'square' && walls.count === 60 && !!walls.maskForLevel, 'walls pack: 60 masked levels');
+  ok(!!walls && !!walls.wallsForLevel, 'walls pack exposes a walls predicate');
+  let wallBad = 0;
+  for (let n = 1; n <= walls.count; n++) {
+    const { rows, cols } = walls.shapeForLevel(n);
+    const mask = walls.maskForLevel(n);
+    const wall = walls.wallsForLevel(n);
+    let playable = 0, borderWalls = 0, leak = 0, wallCells = 0;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (mask(r, c)) playable++;
+        else if (r === 0 || r === rows - 1 || c === 0 || c === cols - 1) borderWalls++;
+        if (wall(r, c)) { wallCells++; if (mask(r, c)) leak++; }
+      }
+    }
+    if (playable < 24 || borderWalls > 0 || leak > 0 || wallCells < 2) wallBad++;
+  }
+  ok(wallBad === 0, 'walls: >=24 playable, no border walls, walls are blocked and non-empty');
 }
 
 section('pack levels generate valid puzzles');
@@ -62,15 +92,17 @@ section('pack levels generate valid puzzles');
   for (const [p, n] of picks) {
     const size = p.sizeForLevel(n);
     const shape = p.shapeForLevel(n);
+    const mask = p.maskForLevel ? p.maskForLevel(n) : undefined;
+    const walls = p.wallsForLevel ? p.wallsForLevel(n) : undefined;
     const lv = generateLevel(p.seedForLevel(n), size, null,
-      { kind: p.kind, rows: shape.rows, cols: shape.cols });
+      { kind: p.kind, rows: shape.rows, cols: shape.cols, mask, walls });
     if (lv.rows !== shape.rows || lv.cols !== shape.cols) {
       bad++;
       console.error(`  FAIL-SHAPE: ${p.id} #${n}: got ${lv.rows}x${lv.cols}, want ${shape.rows}x${shape.cols}`);
     }
     const v = validateLevel(lv);
     if (!v.ok) { bad++; console.error(`  FAIL: ${p.id} #${n}: ${v.errors.slice(0, 2).join(' | ')}`); }
-    else if (lv.stats.borderStraight > 0 || lv.stats.straights > (p.kind === 'hex' ? 3 : 1) ||
+    else if (lv.stats.borderStraight > (p.maskForLevel ? 1 : 0) || lv.stats.straights > (p.kind === 'hex' || p.maskForLevel ? 3 : 1) ||
         (lv.stats.tier !== 'clean' && lv.stats.tier !== 'relaxed')) {
       badShape++;
       console.error(`  FAIL-SHAPE: ${p.id} #${n}: straights=${lv.stats.straights} borderStraight=${lv.stats.borderStraight} tier=${lv.stats.tier}`);
@@ -79,6 +111,28 @@ section('pack levels generate valid puzzles');
   ok(bad === 0, `${picks.length} sampled pack levels all valid`);
   ok(badShape === 0, `${picks.length} sampled pack levels within guarantees`);
   console.log(`  clean rate: ${(100 * cleanCount / picks.length).toFixed(0)}%`);
+}
+
+section('masked packs full sweep');
+for (const id of ['oddshapes', 'walls']) {
+  const p = PACKS.find((x) => x.id === id);
+  let bad = 0;
+  for (let n = 1; n <= p.count; n++) {
+    const { rows, cols } = p.shapeForLevel(n);
+    const mask = p.maskForLevel(n);
+    const walls = p.wallsForLevel ? p.wallsForLevel(n) : undefined;
+    let lv;
+    try {
+      lv = generateLevel(p.seedForLevel(n), p.sizeForLevel(n), null, { rows, cols, mask, walls });
+    } catch (err) {
+      bad++; console.error(`  THREW: ${id} #${n}: ${err && err.message}`); continue;
+    }
+    const v = validateLevel(lv);
+    if (!v.ok) { bad++; console.error(`  INVALID: ${id} #${n}: ${v.errors[0]}`); continue; }
+    if (id === 'walls' && !lv.walls) { bad++; console.error(`  LOST WALLS: ${id} #${n}`); }
+    if (id === 'oddshapes' && lv.walls) { bad++; console.error(`  UNEXPECTED WALLS: ${id} #${n}`); }
+  }
+  ok(bad === 0, `all ${p.count} ${id} levels generate valid (bad=${bad})`);
 }
 
 section('daily');

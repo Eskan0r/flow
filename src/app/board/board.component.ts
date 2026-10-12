@@ -151,7 +151,8 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
       dotR = s * 0.52;
       edge = s * 0.12;
     } else {
-      this.drawSquareGrid(g);
+      if (e.topo.mask) this.drawPolyGrid(g);
+      else this.drawSquareGrid(g);
       const cell = Math.min(this.cssW / e.topo.cols, this.cssH / e.topo.rows);
       pipeW = cell * 0.62;
       dotR = cell * 0.31;
@@ -206,6 +207,67 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
       g.fillStyle = '#fff';
       g.fill();
     }
+  }
+
+  private drawPolyGrid(g: CanvasRenderingContext2D): void {
+    const e = this.store.engine;
+    const mask = e.topo.mask;
+    if (!mask) return;
+    const cols = e.topo.cols;
+    const rows = e.topo.rows;
+    const cw = this.cssW / cols;
+    const ch = this.cssH / rows;
+    const playable = (r: number, c: number): boolean => r >= 0 && r < rows && c >= 0 && c < cols && mask(r, c);
+    // Interior walls are drawn solid; outside-of-shape holes stay empty.
+    const walls = e.walls;
+    if (walls) {
+      g.fillStyle = '#3f3f46';
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          if (walls(r, c) && !mask(r, c)) {
+            g.fillRect(Math.round(c * cw), Math.round(r * ch), Math.ceil(cw), Math.ceil(ch));
+          }
+        }
+      }
+    }
+    // Faint interior lines shared by two playable cells.
+    g.strokeStyle = '#232323';
+    g.lineWidth = 1;
+    g.beginPath();
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (!mask(r, c)) continue;
+        if (playable(r, c + 1)) {
+          const x = Math.round((c + 1) * cw) + 0.5;
+          g.moveTo(x, Math.round(r * ch));
+          g.lineTo(x, Math.round((r + 1) * ch));
+        }
+        if (playable(r + 1, c)) {
+          const y = Math.round((r + 1) * ch) + 0.5;
+          g.moveTo(Math.round(c * cw), y);
+          g.lineTo(Math.round((c + 1) * cw), y);
+        }
+      }
+    }
+    g.stroke();
+    // Silhouette: every edge of a playable cell that faces a non-playable cell.
+    g.strokeStyle = '#3d3d3d';
+    g.lineWidth = 2;
+    g.beginPath();
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (!mask(r, c)) continue;
+        const x = Math.round(c * cw);
+        const y = Math.round(r * ch);
+        const x2 = Math.round((c + 1) * cw);
+        const y2 = Math.round((r + 1) * ch);
+        if (!playable(r - 1, c)) { g.moveTo(x, y); g.lineTo(x2, y); }
+        if (!playable(r + 1, c)) { g.moveTo(x, y2); g.lineTo(x2, y2); }
+        if (!playable(r, c - 1)) { g.moveTo(x, y); g.lineTo(x, y2); }
+        if (!playable(r, c + 1)) { g.moveTo(x2, y); g.lineTo(x2, y2); }
+      }
+    }
+    g.stroke();
   }
 
   private drawSquareGrid(g: CanvasRenderingContext2D): void {

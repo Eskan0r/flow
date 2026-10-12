@@ -133,6 +133,37 @@ section('rectangular grids generate + validate');
   ok(bad === 0, 'thin rect boards still valid (may relax shape)');
 }
 
+section('masked (polyomino) grids generate + validate');
+{
+  const shapes = [
+    { rows: 5, cols: 8, mask: (r, c) => c >= r },              // staircase
+    { rows: 6, cols: 6, mask: (r, c) => c <= r },              // triangle
+    { rows: 7, cols: 7, mask: (r, c) => (r >= 2 && r <= 4) || (c >= 2 && c <= 4) }, // plus
+    { rows: 7, cols: 7, mask: (r, c) => Math.abs(r - c) <= 2 }, // band
+    { rows: 7, cols: 7, mask: (r, c) => !(r >= 1 && r <= 4 && c >= 2 && c <= 4) },  // U
+  ];
+  let bad = 0, badTier = 0;
+  for (const s of shapes) {
+    for (const seed of ['poly-a', 'poly-b', 'poly-c']) {
+      const lv = generateLevel(seed, Math.max(s.rows, s.cols), null, { rows: s.rows, cols: s.cols, mask: s.mask });
+      const v = validateLevel(lv);
+      if (!v.ok) { bad++; console.error(`  FAIL: ${seed} ${s.rows}x${s.cols}: ${v.errors.slice(0, 2).join(' | ')}`); continue; }
+      const cells = countPlayable(s.mask, s.rows, s.cols);
+      const covered = lv.solution.reduce((n, sg) => n + sg.length, 0);
+      if (covered !== cells) bad++;
+      if (lv.stats.tier === 'dirty') badTier++;
+    }
+  }
+  ok(bad === 0, 'all masked samples valid + fully cover the shape');
+  ok(badTier === 0, 'masked samples never dirty');
+}
+
+function countPlayable(mask, rows, cols) {
+  let n = 0;
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) if (mask(r, c)) n++;
+  return n;
+}
+
 console.log(`\n----------------------------------------\nGENERATOR: PASS ${pass} · FAIL ${fail}`);
 if (fail) {
   failures.slice(0, 20).forEach((f) => console.log(' - ' + f));

@@ -1,7 +1,7 @@
 /* Level packs, Flow-Free style: named packs with fixed level counts, size
  * schedules, and seed namespaces. Framework-free (tested by plain node). */
 
-import type { BoardKind } from './topology';
+import type { BoardKind, Mask } from './topology';
 
 export interface Pack {
   id: string;
@@ -13,6 +13,10 @@ export interface Pack {
   sizeForLevel(n: number): number;
   /** Board geometry. Equals { rows: size, cols: size } for square packs. */
   shapeForLevel(n: number): { rows: number; cols: number };
+  /** Polyomino shape for the level (masked square boards only). */
+  maskForLevel?(n: number): Mask;
+  /** Interior wall cells for the level (rendering hint; masked boards only). */
+  wallsForLevel?(n: number): Mask;
   seedForLevel(n: number): string;
 }
 
@@ -29,6 +33,50 @@ function squareShape(n: number, sizeForLevel: (n: number) => number): { rows: nu
 /** A square/hex pack: shape always mirrors the nominal size. */
 function uniformPack(base: Omit<Pack, 'shapeForLevel'>): Pack {
   return { ...base, shapeForLevel: (n) => squareShape(n, base.sizeForLevel) };
+}
+
+// ---- polyomino shapes (bounding box is 7x7 unless noted) ----
+const polyStair: Mask = (r, c) => c >= r; // 5x8 upper-right staircase
+const polyTriangle: Mask = (r, c) => c <= r; // 6x6 lower triangle
+const polyPlus: Mask = (r, c) => (r >= 2 && r <= 4) || (c >= 2 && c <= 4); // 7x7 thick plus
+const polyBand: Mask = (r, c) => Math.abs(r - c) <= 2; // 7x7 diagonal band
+const polyU: Mask = (r, c) => !(r >= 1 && r <= 4 && c >= 2 && c <= 4); // 7x7 U / notched
+
+// ---- wall patterns: enclosed interior blocks (never on the board border, so
+//      the renderer can tell them apart from outside-of-shape holes) ----
+type WallPattern = (rows: number, cols: number) => Mask;
+const WALL_PATTERNS: WallPattern[] = [
+  (rows, cols) => { // 2x2 centre block
+    const r0 = (rows - 1) >> 1;
+    const c0 = (cols - 1) >> 1;
+    return (r, c) => (r === r0 || r === r0 + 1) && (c === c0 || c === c0 + 1);
+  },
+  (rows, cols) => // four inner pillars
+    (r, c) => (r === 1 || r === rows - 2) && (c === 1 || c === cols - 2),
+  (_rows, _cols) => { // horizontal bar
+    const r0 = (_rows - 1) >> 1;
+    const c0 = (_cols - 1) >> 1;
+    return (r, c) => r === r0 && Math.abs(c - c0) <= 1;
+  },
+  (_rows, _cols) => { // vertical bar
+    const r0 = (_rows - 1) >> 1;
+    const c0 = (_cols - 1) >> 1;
+    return (r, c) => c === c0 && Math.abs(r - r0) <= 1;
+  },
+  (_rows, _cols) => { // plus
+    const r0 = (_rows - 1) >> 1;
+    const c0 = (_cols - 1) >> 1;
+    return (r, c) => (r === r0 && Math.abs(c - c0) <= 1) || (c === c0 && Math.abs(r - r0) <= 1);
+  },
+  (rows, cols) => { // diagonal staircase from (2,2)
+    const hi = Math.min(rows, cols) - 3;
+    return (r, c) => r >= 2 && r <= hi && r === c;
+  },
+];
+
+/** Wall cells for level `n` on a `rows x cols` board. */
+function wallPatternFor(n: number, rows: number, cols: number): Mask {
+  return WALL_PATTERNS[(n - 1) % WALL_PATTERNS.length](rows, cols);
 }
 
 export const PACKS: Pack[] = [
@@ -72,6 +120,43 @@ export const PACKS: Pack[] = [
     sizeForLevel: (n) => band(n, [[20, 7], [40, 8], [60, 10]]),
     shapeForLevel: (n) => (n <= 20 ? { rows: 5, cols: 7 } : n <= 40 ? { rows: 6, cols: 8 } : { rows: 8, cols: 10 }),
     seedForLevel: (n) => `flow-rectangles-${n}`,
+  },
+  {
+    id: 'oddshapes',
+    name: 'Odd Shapes',
+    desc: 'Staircases, U\'s, pluses and bands',
+    color: '#ea580c',
+    kind: 'square',
+    count: 60,
+    sizeForLevel: (n) => (n <= 12 ? 8 : 7),
+    shapeForLevel: (n) => (n <= 12 ? { rows: 5, cols: 8 } : n <= 24 ? { rows: 6, cols: 6 } : { rows: 7, cols: 7 }),
+    maskForLevel: (n) =>
+      n <= 12 ? polyStair
+        : n <= 24 ? polyTriangle
+          : n <= 36 ? polyPlus
+            : n <= 48 ? polyBand
+              : polyU,
+    seedForLevel: (n) => `flow-oddshapes-${n}`,
+  },
+  {
+    id: 'walls',
+    name: 'Walls',
+    desc: 'Route around blocked cells',
+    color: '#475569',
+    kind: 'square',
+    count: 60,
+    sizeForLevel: (n) => band(n, [[15, 6], [40, 7], [60, 8]]),
+    shapeForLevel: (n) => squareShape(n, (m) => band(m, [[15, 6], [40, 7], [60, 8]])),
+    maskForLevel: (n) => {
+      const s = band(n, [[15, 6], [40, 7], [60, 8]]);
+      const w = wallPatternFor(n, s, s);
+      return (r, c) => !w(r, c);
+    },
+    wallsForLevel: (n) => {
+      const s = band(n, [[15, 6], [40, 7], [60, 8]]);
+      return wallPatternFor(n, s, s);
+    },
+    seedForLevel: (n) => `flow-walls-${n}`,
   },
 ];
 

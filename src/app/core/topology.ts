@@ -5,15 +5,24 @@
 
 export type BoardKind = 'square' | 'hex';
 export type Cell = [number, number];
+/** Per-cell playability predicate (polyomino/wall masks). */
+export type Mask = (r: number, c: number) => boolean;
 
 export interface Topology {
   kind: BoardKind;
   rows: number;
   cols: number;
+  /** Dense grid size (rows x cols), the array/stride domain for `key`. */
   total: number;
+  /** Playable cell count (== `total` when there is no mask). */
+  cells: number;
+  /** Shape mask: a cell is playable only when this (optional) predicate holds. */
+  mask?: Mask;
+  /** Interior wall cells (blocked, subset of `!mask`); rendering hint only. */
+  walls?: Mask;
   key(r: number, c: number): number;
   inBounds(r: number, c: number): boolean;
-  /** Orthogonal neighbors, in-bounds only, deterministic order. */
+  /** Orthogonal neighbors, in-bounds and in-shape only, deterministic order. */
   neighbors(r: number, c: number): Cell[];
   /** Shortest-path length in cells steps. */
   distance(a: Cell, b: Cell): number;
@@ -22,6 +31,62 @@ export interface Topology {
   stepOptions(from: Cell, to: Cell): Cell[];
   /** True when all cells lie on one grid line (row/col, or hex axis). */
   collinear(cells: Cell[]): boolean;
+}
+
+/** Square-grid topology over a connected cell mask (polyomino shape / walls).
+ *  Keys stay dense over the bounding rectangle (stride = cols); `mask`
+ *  decides playability. `border` = a playable cell with a masked-out neighbor
+ *  (pipes hug shape holes exactly like the board edge). */
+export function maskTopology(rows: number, cols: number, mask: Mask, walls?: Mask): Topology {
+  const inBounds = (r: number, c: number): boolean => r >= 0 && r < rows && c >= 0 && c < cols;
+  const playable = (r: number, c: number): boolean => inBounds(r, c) && mask(r, c);
+  let cells = 0;
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) if (mask(r, c)) cells++;
+  const neighbors = (r: number, c: number): Cell[] => {
+    const out: Cell[] = [];
+    if (playable(r - 1, c)) out.push([r - 1, c]);
+    if (playable(r + 1, c)) out.push([r + 1, c]);
+    if (playable(r, c - 1)) out.push([r, c - 1]);
+    if (playable(r, c + 1)) out.push([r, c + 1]);
+    return out;
+  };
+  const isShapeInBounds = (r: number, c: number): boolean => r >= 0 && r < rows && c >= 0 && c < cols;
+  return {
+    kind: 'square',
+    rows,
+    cols,
+    total: rows * cols,
+    cells,
+    mask,
+    walls,
+    key: (r, c) => r * cols + c,
+    inBounds: playable,
+    neighbors,
+    distance: ([r1, c1], [r2, c2]) => Math.abs(r1 - r2) + Math.abs(c1 - c2),
+    isBorder: ([r, c]) =>
+      !mask(r, c) || // unreachable; defensive
+      !isShapeInBounds(r - 1, c) || !mask(r - 1, c) ||
+      !isShapeInBounds(r + 1, c) || !mask(r + 1, c) ||
+      !isShapeInBounds(r, c - 1) || !mask(r, c - 1) ||
+      !isShapeInBounds(r, c + 1) || !mask(r, c + 1),
+    stepOptions: ([r, c], [tr, tc]) => {
+      const out: Cell[] = [];
+      const dr = tr - r;
+      const dc = tc - c;
+      const v: Cell | null = dr !== 0 ? [r + Math.sign(dr), c] : null;
+      const h: Cell | null = dc !== 0 ? [r, c + Math.sign(dc)] : null;
+      if (v && h) out.push(Math.abs(dr) >= Math.abs(dc) ? v : h, Math.abs(dr) >= Math.abs(dc) ? h : v);
+      else if (v) out.push(v);
+      else if (h) out.push(h);
+      return out.filter(([rr, cc]) => playable(rr, cc));
+    },
+    collinear: (cells) => {
+      if (cells.length === 0) return true;
+      const r0 = cells[0][0];
+      const c0 = cells[0][1];
+      return cells.every(([r]) => r === r0) || cells.every(([, c]) => c === c0);
+    },
+  };
 }
 
 /** Rectangular square-grid topology (rows x cols). `squareTopology` is the
@@ -41,6 +106,7 @@ export function rectTopology(rows: number, cols: number): Topology {
     rows,
     cols,
     total: rows * cols,
+    cells: rows * cols,
     key: (r, c) => r * cols + c,
     inBounds,
     neighbors,
@@ -119,6 +185,7 @@ export function hexTopology(rows: number, cols: number): Topology {
     rows,
     cols,
     total: rows * cols,
+    cells: rows * cols,
     key: (r, c) => r * cols + c,
     inBounds,
     neighbors,

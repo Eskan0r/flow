@@ -202,7 +202,8 @@ export function carveLevel(
 ): CarvedBoard | null {
   const rng = seededRng(`${String(seed)}::carve${opts.salt ?? ''}`);
   const total = topo.total;
-  const avg = total / numPairs;
+  const cells = topo.cells;
+  const avg = cells / numPairs;
   const minLen = Math.max(4, Math.floor(avg * 0.5));
   const maxLen = Math.ceil(avg * 1.7);
   const kMin = Math.max(2, numPairs - (opts.kSlack ?? 2));
@@ -222,6 +223,13 @@ export function carveLevel(
   for (let rs = 0; rs < 12; rs++) {
     if (Date.now() - t0 > timeBudget) break;
     const grid = new Array<number>(total).fill(-1);
+    if (topo.mask) {
+      for (let r = 0; r < topo.rows; r++) {
+        for (let c = 0; c < topo.cols; c++) {
+          if (!topo.mask(r, c)) grid[topo.key(r, c)] = -2;
+        }
+      }
+    }
     const st: CarveState = {
       topo, grid, flows: [], minLen, maxLen, kMin, kMax,
       triesPerFlow, pathBudget, rng, attempts,

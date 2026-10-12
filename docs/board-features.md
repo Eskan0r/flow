@@ -237,8 +237,20 @@ across topologies -> do last.
   takes optional `rows/cols`; store routes/persists `rows`/`cols` params.
   `Pack.shapeForLevel(n)` added + new 60-level **Rectangles** pack (5x7 → 8x10).
   Board renderer sizes per-axis (fit/center/grid/evCell). `npm test` + build green.
-- [ ] **2. Polyomino mask** — exercises `carve.ts` on arbitrary regions.
-- [ ] **3. Walls** — a subset of the mask; shares region/feasibility checks.
+- [x] **2. Polyomino mask** — DONE (2026-10-12). `maskTopology(rows, cols, mask)`
+  + `Topology.cells`/`mask`; dense keys over the bounding rect, blocked cells
+  seeded `-2` in carve. Masked boards carve (never the rect snake); deeper
+  carve tuning + pair-count relaxation fallback. `GenerateOptions.mask`,
+  `FlowLevel.mask`, engine `loadLevel(..., mask)`, `Pack.maskForLevel` + new
+  60-level **Odd Shapes** pack (staircase/triangle/plus/band/U). Renderer draws
+  only shape cells + silhouette. `npm test` + build green.
+- [x] **3. Walls** — DONE (2026-10-12). Walls reuse the #2 mask: a board is
+  the full rectangle minus a set of enclosed interior cells, and those cells
+  are threaded as an explicit `walls` predicate (topology/`GenerateOptions`/
+  `FlowLevel`/engine/`Pack.wallsForLevel`) so the renderer can tell a wall from
+  an outside-of-shape hole. New 60-level **Walls** pack (6x6→8x8; centre
+  block, pillars, bars, plus, staircase). Renderer fills wall cells solid.
+  `npm test` + build green.
 - [ ] **4. Warps** — isolated to topology neighbor/distance/stepOptions + rendering.
 - [ ] **5. Continuous chain** — engine/UX-heavy, needs per-topology endpoint geometry.
 

@@ -2,7 +2,7 @@
  * hex pixel round-trips. Run: node ... tests/topology.mjs
  */
 import {
-  hexCellCenter, hexLayout, hexPixelToCell, hexTopology, rectTopology, squareTopology,
+  hexCellCenter, hexLayout, hexPixelToCell, hexTopology, maskTopology, rectTopology, squareTopology,
 } from '../src/app/core/topology.ts';
 import { buildSnake } from '../src/app/core/flow-generator.ts';
 
@@ -119,6 +119,65 @@ section('rectangular topology');
   }
   ok(badWalk === 0, 'rect greedy walks terminate');
   ok(squareTopology(6).total === 36 && squareTopology(6).cols === 6, 'square delegates to rect');
+}
+
+section('masked polyomino topology');
+{
+  // 5x5 diamond: |r-2| + |c-2| <= 2  ->  13 playable cells
+  const t = maskTopology(5, 5, (r, c) => Math.abs(r - 2) + Math.abs(c - 2) <= 2);
+  ok(t.rows === 5 && t.cols === 5 && t.total === 25, 'mask keeps dense bounding grid');
+  ok(t.cells === 13, `mask cells counted (got ${t.cells})`);
+  ok(t.inBounds(2, 2) && t.inBounds(0, 2), 'center + tip in shape');
+  ok(!t.inBounds(0, 0) && !t.inBounds(4, 4), 'corners out of shape');
+  ok(t.key(3, 2) === 17, 'mask key stride is cols (dense)');
+  ok(t.neighbors(2, 2).length === 4, 'center has 4 neighbors');
+  ok(t.neighbors(0, 2).length === 1, 'tip has 1 neighbor (shape edge)');
+  ok(t.neighbors(0, 0).length === 0, 'outside cell has no neighbors');
+  ok(t.isBorder([0, 2]) && t.isBorder([2, 0]), 'shape tips are border');
+  ok(!t.isBorder([2, 2]), 'center is not border');
+  // no neighbor crosses the mask
+  let leak = 0;
+  for (let r = 0; r < 5; r++) {
+    for (let c = 0; c < 5; c++) {
+      if (!t.inBounds(r, c)) continue;
+      for (const [nr, nc] of t.neighbors(r, c)) if (!t.inBounds(nr, nc)) leak++;
+    }
+  }
+  ok(leak === 0, 'neighbors never leave the shape');
+  // every playable cell reachable from the center (connected)
+  const seen = new Set([t.key(2, 2)]);
+  const q = [[2, 2]];
+  while (q.length) {
+    const [r, c] = q.pop();
+    for (const [nr, nc] of t.neighbors(r, c)) {
+      const k = t.key(nr, nc);
+      if (!seen.has(k)) { seen.add(k); q.push([nr, nc]); }
+    }
+  }
+  ok(seen.size === t.cells, 'diamond shape is connected');
+}
+
+section('wall topology (full rect minus enclosed walls)');
+{
+  // 7x7 with a plus of wall cells around the centre (44 playable).
+  const wall = (r, c) => (r === 3 && Math.abs(c - 3) <= 1) || (c === 3 && Math.abs(r - 3) <= 1);
+  const t = maskTopology(7, 7, (r, c) => !wall(r, c));
+  ok(t.rows === 7 && t.cols === 7 && t.total === 49, 'wall board keeps dense bounding grid');
+  ok(t.cells === 44, `wall board cell count (got ${t.cells})`);
+  ok(!t.inBounds(3, 3) && !t.inBounds(3, 2), 'wall cells are not playable');
+  ok(t.neighbors(1, 1).length === 4, 'open playable cell keeps 4 neighbors');
+  ok(t.neighbors(2, 2).length === 2, 'cell beside the plus only reaches its open sides');
+  ok(t.isBorder([2, 2]), 'cell hugging a wall is a border (pipes hug walls)');
+  ok(!t.isBorder([1, 1]), 'open cell with no wall neighbour is not border');
+  ok(t.stepOptions([1, 1], [3, 1]).every(([r, c]) => t.inBounds(r, c)), 'stepOptions honour playability');
+  let throughWall = 0;
+  for (let r = 0; r < 7; r++) {
+    for (let c = 0; c < 7; c++) {
+      if (!t.inBounds(r, c)) continue;
+      for (const [nr, nc] of t.stepOptions([r, c], [r, c + 1])) if (wall(nr, nc)) throughWall++;
+    }
+  }
+  ok(throughWall === 0, 'stepOptions never route through a wall');
 }
 
 section('snake validity on both topologies');
