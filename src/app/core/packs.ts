@@ -84,7 +84,7 @@ export type DailyMark = 'perfect' | 'done' | 'todo';
 
 const MARK_EMOJI: Record<DailyMark, string> = {
   perfect: '⭐',
-  done: '🟩',
+  done: '✅',
   todo: '⬛',
 };
 

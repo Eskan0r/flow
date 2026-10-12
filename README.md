@@ -34,9 +34,15 @@ npx --yes serve dist/flow-web/browser
 ## Test it
 
 ```sh
-npm test             # generator suite (519 checks) + engine suite (29) + packs suite (31), plain node
-npx ng test          # vitest: engine specs + full AppComponent play-through to a win dialog
+npm test             # five framework-free node suites, plain node:
+                     #   topology → generator/validate → hex → engine → packs
+npm run test:unit    # vitest: engine specs + full AppComponent play-through to a win dialog
 ```
+
+Each node suite prints `ALL … CHECKS PASSED` on success (topology math,
+generator solvability, hex fuzz, engine gameplay, pack integrity). Plain
+node runs the TypeScript sources directly via `--experimental-strip-types`
+plus the `tests/hooks.mjs` ESM loader.
 
 End-to-end (real browser, headless Electron):
 
@@ -45,7 +51,8 @@ npm run test:e2e      # starts ng serve, waits for :4200, runs cypress run
 npx cypress open      # interactive runner (needs the dev server up: npm start)
 ```
 
-13 e2e specs in `cypress/`: pack navigation, a full pointer-event
+6 e2e specs / 23 tests in `cypress/e2e/` (`controls` 8, `packs` 6, `moves`
+3, `play` 3, `share` 2, `hex` 1): pack navigation, a full pointer-event
 play-through of Regular 1 to a 3-star win (solution computed from the same
 seeded generator), Next-to-level-2 with persisted progress, undo / reset /
 hint / new / seed / daily / right-click clear. Stable selectors live on
@@ -109,9 +116,11 @@ deterministic from their seeds.
 
 ## Layout
 
-- `src/app/core/` — `flow-generator.ts`, `flow-engine.ts` (pure game
-  logic, no DOM), `packs.ts` (pack defs), `flow-store.ts` (signals, clock,
-  persistence, sounds, win dialog), `sound.ts`
+- `src/app/core/` — `topology.ts` (square + hex grid math, snake build),
+  `carve.ts` (backbite carving helpers), `flow-generator.ts`, `flow-engine.ts`
+  (pure game logic, no DOM), `packs.ts` (pack defs + daily seeds/share
+  cards), `flow-store.ts` (signals, clock, persistence, sounds, win dialog),
+  `sound.ts`; `.spec.ts` files sit beside `flow-engine.ts` and `topology.ts`
 - `src/app/board/` — black canvas renderer + pointer engine
 - `src/app/win-dialog/` — win dialog content (opens via `HlmDialogService`)
 - `src/app/app.ts` / `app.html` — shadcn-style shell (header, setup card,
