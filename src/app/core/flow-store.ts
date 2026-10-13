@@ -74,12 +74,9 @@ export class FlowStore {
     } catch {
       q = null;
     }
-    let last: string | null = null;
-    try {
-      last = localStorage.getItem('flow.last');
-    } catch {
-      last = null;
-    }
+    // Explicit deep links only (?pack=&level=, ?seed=, legacy ?level=). A
+    // bare visit always lands on the home page: no restoring the last
+    // played level, no rewriting the URL to one.
     if (q?.get('pack')) {
       const p = packById(q.get('pack') ?? '');
       const n = Math.max(1, parseInt(q.get('level') ?? '1', 10) || 1);
@@ -100,30 +97,6 @@ export class FlowStore {
       const p = packById('regular');
       if (p) this.playPackLevel(p, 1, false);
       else this.showPacks();
-    } else if (last) {
-      try {
-        const u = new URL(last);
-        if (u.searchParams.get('pack')) {
-          const p = packById(u.searchParams.get('pack') ?? '');
-          const n = Math.max(1, parseInt(u.searchParams.get('level') ?? '1', 10) || 1);
-          if (p) {
-            this.playPackLevel(p, Math.min(n, p.count), false);
-            return;
-          }
-        }
-        if (u.searchParams.get('seed')) {
-          const s2 = Math.min(10, Math.max(5, parseInt(u.searchParams.get('size') ?? '7', 10) || 7));
-          const k2 = u.searchParams.get('kind') === 'hex' ? 'hex' : 'square';
-          const r2 = parseInt(u.searchParams.get('rows') ?? '0', 10) || 0;
-          const c2 = parseInt(u.searchParams.get('cols') ?? '0', 10) || 0;
-          this.seedInput.set(u.searchParams.get('seed') ?? '');
-          this.loadSeed(this.seedInput(), s2, k2, r2, c2);
-        } else {
-          this.showPacks();
-        }
-      } catch {
-        this.showPacks();
-      }
     } else {
       this.showPacks();
     }
@@ -149,7 +122,20 @@ export class FlowStore {
         if (this.engine.topo.kind === 'hex') u.searchParams.set('kind', 'hex');
       }
       history.replaceState(null, '', u.toString());
-      localStorage.setItem('flow.last', u.toString());
+    } catch {
+      /* non-browser / restricted */
+    }
+  }
+
+  /** Drop level params from the address bar when leaving the game, so the
+   *  URL never points at a level that isn't on screen. */
+  private clearRoute(): void {
+    try {
+      const u = new URL(location.href);
+      if (u.search) {
+        u.search = '';
+        history.replaceState(null, '', u.toString());
+      }
     } catch {
       /* non-browser / restricted */
     }
@@ -161,25 +147,28 @@ export class FlowStore {
     this.closeDialog();
     this.pack.set(null);
     this.view.set('packs');
+    this.clearRoute();
   }
 
   showDailies(): void {
     this.closeDialog();
     this.pack.set(null);
     this.view.set('dailies');
+    this.clearRoute();
   }
 
   openPack(p: Pack): void {
     this.closeDialog();
     this.pack.set(p);
     this.view.set('levels');
+    this.clearRoute();
   }
 
   backFromGame(): void {
-    this.closeDialog();
-    if (this.pack()) this.view.set('levels');
-    else if (this.engine.seed.startsWith('daily-')) this.view.set('dailies');
-    else this.view.set('packs');
+    const p = this.pack();
+    if (p) this.openPack(p);
+    else if (this.engine.seed.startsWith('daily-')) this.showDailies();
+    else this.showPacks();
   }
 
   /** Play a pack level. Silent skips the click sound (used by boot). */

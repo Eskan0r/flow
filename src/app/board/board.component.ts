@@ -373,6 +373,9 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
    *  wrapped continuation would only survive as a ghost. */
   private pathStrokes(path: Cell[]): Array<Array<[number, number]>> {
     const e = this.store.engine;
+    // Hex cells don't sit on a rectangular lattice (odd-r rows are offset),
+    // so delta accumulation doesn't apply: map each cell to its center.
+    if (e.topo.kind === 'hex') return [path.map(([r, c]) => this.center(r, c))];
     const warp = !!e.topo.warp;
     const m = this.squareMetrics();
     const strokes: Array<Array<[number, number]>> = [[this.center(path[0][0], path[0][1])]];
