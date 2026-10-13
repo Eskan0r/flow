@@ -132,7 +132,7 @@ export class FlowEngine {
     return this.topo.inBounds(r, c);
   }
 
-  loadLevel(mode: PlayMode, levelNum = 1, seed = '', size = 7, kind: BoardKind = 'square', rows = 0, cols = 0, mask: Mask | null = null, walls: Mask | null = null, warp = false, chain = false): void {
+  loadLevel(mode: PlayMode, levelNum = 1, seed = '', size = 7, kind: BoardKind = 'square', rows = 0, cols = 0, mask: Mask | null = null, walls: Mask | null = null, warp = false, chain = false, pairCount: number | null = null): void {
     this.mode = mode;
     if (mode === 'level') {
       this.levelNum = levelNum;
@@ -156,11 +156,14 @@ export class FlowEngine {
         ? maskTopology(this.rows, this.cols, this.mask, this.walls)
         : rectTopology(this.rows, this.cols, this.warp);
     // Masked shapes pick their own density inside generateLevel (pass null).
-    const genPairs = kind === 'hex'
-      ? defaultHexPairs(this.rows, this.cols)
-      : this.mask
-        ? null
-        : defaultPairsForSize(Math.max(this.rows, this.cols));
+    // Packs may pin the pair count per level (density rotation); customs
+    // and dailies use the size default.
+    const genPairs = pairCount
+      ?? (kind === 'hex'
+        ? defaultHexPairs(this.rows, this.cols)
+        : this.mask
+          ? null
+          : defaultPairsForSize(Math.max(this.rows, this.cols)));
     this.numPairs = genPairs ?? defaultPairsForSize(Math.max(this.rows, this.cols));
     const opts = { kind, rows: this.rows, cols: this.cols, mask: this.mask, walls: this.walls, warp: this.warp };
 

@@ -111,7 +111,7 @@
       >
         <span>
           <span class="block text-lg font-bold">Daily {{ i }}</span>
-          <span class="block text-xs font-normal text-muted-foreground">{{ dailySize(i) }}×{{ dailySize(i) }}{{ dailyKind(i) === 'hex' ? ' Hex' : '' }} board</span>
+          <span class="block text-xs font-normal text-muted-foreground">{{ dailyBlurb(i) }} board</span>
         </span>
         @if (dailyDone(i)) {
           <span class="text-sm font-semibold tabular-nums">✓</span>

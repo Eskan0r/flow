@@ -65,12 +65,8 @@ export class App implements OnInit {
     return this.store.dailyLabelToday();
   }
 
-  protected dailySize(i: number): number {
-    return this.store.dailySize(i);
-  }
-
-  protected dailyKind(i: number): string {
-    return this.store.dailyKind(i);
+  protected dailyBlurb(i: number): string {
+    return this.store.dailyBlurb(i);
   }
 
   protected dailyDone(i: number): boolean {
@@ -112,7 +108,7 @@ export class App implements OnInit {
     const parsed = this.store.parseDaily();
     if (parsed) {
       const n = parsed.index + dir;
-      this.store.daily(n < 1 ? 5 : n > 5 ? 1 : n);
+      this.store.daily(n < 1 ? 5 : n > 5 ? 1 : n, parsed.date);
       return;
     }
     this.store.newRandom();

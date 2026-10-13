@@ -592,17 +592,28 @@ export function generateLevel(
 
   // Diversity pick: best-by-score funnels different seeds into the same few
   // optima (repeat levels across a pack), so choose by seed among the top
-  // scorers instead. The strict filter keeps the suite invariants green by
-  // construction; the rng draw sits at a fixed program point, so one seed
-  // still deals one level on every client.
+  // scorers instead. The pool is deduped to distinct dot layouts first (same
+  // dots from different snakes would waste finalist slots). The strict
+  // filter keeps the suite invariants green by construction; the rng draw
+  // sits at a fixed program point, so one seed still deals one level on
+  // every client.
   const pool = cleanPool.length > 0 ? cleanPool : relaxedPool;
-  const strict = pool.filter((c) =>
+  const seenPairs = new Set<string>();
+  const distinct = pool.filter((c) => {
+    const k = JSON.stringify(c.info.pairs);
+    if (seenPairs.has(k)) return false;
+    seenPairs.add(k);
+    return true;
+  });
+  const strict = distinct.filter((c) =>
     c.info.minRatio >= 0.25 && c.info.minD >= 2 &&
-    c.info.straights <= 1 && c.info.borderStraight === 0);
-  const top = (strict.length > 0 ? strict : pool)
+    c.info.straights <= 1 && c.info.borderStraight === 0 &&
+    c.info.overlapCells >= 2 &&
+    c.info.maxDetour <= Math.ceil((size * size / K) * 0.9));
+  const top = (strict.length > 0 ? strict : distinct)
     .slice()
     .sort((x, y) => y.info.score - x.info.score)
-    .slice(0, 8);
+    .slice(0, 12);
   const best = top.length > 0 ? top[Math.floor(rng() * top.length)] : bestDirty;
   // Phase C: best-effort fallback. Always yields a solvable board (the cut
   // itself is a full-coverage solution); only the shape polish may be missing.

@@ -8,7 +8,7 @@ import type { BrnDialogRef } from '@spartan-ng/brain/dialog';
 import { HlmDialogService } from '../ui/dialog';
 import { WinDialogComponent, type WinDialogContext } from '../win-dialog/win-dialog.component';
 import { FlowEngine, randomSeed } from './flow-engine';
-import { DAILY_COUNT, DAILY_KINDS, DAILY_SIZES, PACKS, dailyLabel, dailySeed, dailyShareCard, packById, parseDailySeed, type DailyMark, type Pack } from './packs';
+import { DAILY_COUNT, PACKS, dailyLabel, dailySeed, dailyShareCard, dailySpec, packById, parseDailySeed, type DailyMark, type Pack } from './packs';
 import { Sound } from './sound';
 import type { BoardKind } from './topology';
 
@@ -90,8 +90,14 @@ export class FlowStore {
       const kind = q.get('kind') === 'hex' ? 'hex' : 'square';
       const rows = parseInt(q.get('rows') ?? '0', 10) || 0;
       const cols = parseInt(q.get('cols') ?? '0', 10) || 0;
+      const warp = q.get('warp') === '1';
+      const chain = q.get('chain') === '1';
       this.seedInput.set(q.get('seed') ?? '');
-      this.loadSeed(this.seedInput(), size, kind, rows, cols);
+      // Daily links resolve by embedded date (spec rotation covers shapes
+      // URL params can't describe); custom seeds use the params directly.
+      const pd = parseDailySeed(this.seedInput());
+      if (pd) this.daily(pd.index, pd.date);
+      else this.loadSeed(this.seedInput(), size, kind, rows, cols, warp, chain);
     } else if (q?.get('level')) {
       // legacy route from before packs existed ? start of Regular Pack
       const p = packById('regular');
@@ -120,6 +126,8 @@ export class FlowStore {
           u.searchParams.set('cols', String(this.engine.cols));
         }
         if (this.engine.topo.kind === 'hex') u.searchParams.set('kind', 'hex');
+        if (this.engine.warp) u.searchParams.set('warp', '1');
+        if (this.engine.chain) u.searchParams.set('chain', '1');
       }
       history.replaceState(null, '', u.toString());
     } catch {
@@ -183,7 +191,8 @@ export class FlowStore {
     const walls = p.wallsForLevel ? p.wallsForLevel(level) : null;
     const warp = p.warpForLevel ? p.warpForLevel(level) : false;
     const chain = p.chainForLevel ? p.chainForLevel(level) : false;
-    this.engine.loadLevel('seed', 0, p.seedForLevel(level), p.sizeForLevel(level), p.kind, rows, cols, mask, walls, warp, chain);
+    const pairCount = p.pairsOverride?.[level] ?? (p.pairsForLevel ? p.pairsForLevel(level) : null);
+    this.engine.loadLevel('seed', 0, p.seedForLevel(level), p.sizeForLevel(level), p.kind, rows, cols, mask, walls, warp, chain, pairCount);
     this.view.set('game');
     this.afterLoad();
     if (announce) this.sound.click();
@@ -197,10 +206,11 @@ export class FlowStore {
     this.view.set('game');
   }
 
-  loadSeed(seed: string, size: number, kind?: BoardKind, rows = 0, cols = 0): void {
+  loadSeed(seed: string, size: number, kind?: BoardKind, rows = 0, cols = 0, warp = false, chain = false): void {
     const k = kind ?? this.kind();
     this.kind.set(k);
-    this.engine.loadLevel('seed', 0, seed, size, k, rows, cols);
+    this.engine.loadLevel('seed', 0, seed, size, k, rows, cols, null, null, warp, chain);
+    this.view.set('game');
     this.afterLoad();
   }
 
@@ -220,13 +230,14 @@ export class FlowStore {
     this.afterLoad();
   }
 
-  /** Play one of today's puzzles (1-based index into DAILY_SIZES/KINDS). */
-  daily(index = 1): void {
+  /** Play one of a date's puzzles (1-based index; category rotates by date).
+   *  Daily links resolve by their embedded date, so masked/warp/chain
+   *  dailies (which URL params alone can't describe) load exactly. */
+  daily(index = 1, dateStr: string = dailyLabel()): void {
     const i = Math.min(Math.max(1, index), DAILY_COUNT);
     // Dailies are one-shot: a completed level can't be replayed. Send the
     // player back to the menu instead of loading the board again.
-    const today = dailyLabel();
-    const done = this.dailyDoneOn(today);
+    const done = this.dailyDoneOn(dateStr);
     if (done.includes(i)) {
       this.showDailies();
       this.toast(
@@ -236,12 +247,16 @@ export class FlowStore {
       );
       return;
     }
-    const sd = dailySeed(new Date(), i);
-    const k = DAILY_KINDS[i - 1];
+    const sd = dailySeed(dateStr, i);
+    const spec = dailySpec(dateStr, i);
     this.seedInput.set(sd);
     this.pack.set(null);
-    this.kind.set(k);
-    this.engine.loadLevel('seed', 0, sd, DAILY_SIZES[i - 1], k);
+    this.kind.set(spec.kind);
+    this.engine.loadLevel(
+      'seed', 0, sd, Math.max(spec.rows, spec.cols), spec.kind,
+      spec.rows, spec.cols, spec.mask ?? null, spec.walls ?? null,
+      spec.warp ?? false, spec.chain ?? false,
+    );
     this.view.set('game');
     this.afterLoad();
     this.toast(`Daily ${i} of ${DAILY_COUNT}`);
@@ -252,11 +267,18 @@ export class FlowStore {
   }
 
   dailySize(index: number): number {
-    return DAILY_SIZES[Math.min(Math.max(1, index), DAILY_COUNT) - 1];
+    const s = dailySpec(dailyLabel(), Math.min(Math.max(1, index), DAILY_COUNT));
+    return Math.max(s.rows, s.cols);
   }
 
   dailyKind(index: number): BoardKind {
-    return DAILY_KINDS[Math.min(Math.max(1, index), DAILY_COUNT) - 1];
+    return dailySpec(dailyLabel(), Math.min(Math.max(1, index), DAILY_COUNT)).kind;
+  }
+
+  /** Menu line for a date's daily: shape plus category tag. */
+  dailyBlurb(index: number, dateStr: string = dailyLabel()): string {
+    const s = dailySpec(dateStr, Math.min(Math.max(1, index), DAILY_COUNT));
+    return `${s.rows}\u00D7${s.cols}${s.tag ? ` ${s.tag}` : ''}`;
   }
 
   /** Parse the current engine seed as a daily ({date,index}) or null. */
@@ -379,7 +401,8 @@ export class FlowStore {
     if (done.length < DAILY_COUNT) return null;
     let sum = 0;
     for (let i = 1; i <= DAILY_COUNT; i++) {
-      const b = this.loadBestFor(dailySeed(date, i), DAILY_SIZES[i - 1], DAILY_SIZES[i - 1]);
+      const spec = dailySpec(date, i);
+      const b = this.loadBestFor(dailySeed(date, i), spec.rows, spec.cols);
       if (!b) return null;
       sum += b.t;
     }
@@ -523,7 +546,9 @@ export class FlowStore {
     } else if (e.seed.startsWith('daily-')) {
       this.title.set('Daily Puzzle');
       const hex = e.topo.kind === 'hex' ? ' Hex' : '';
-      this.subtitle.set(`${dims}${hex} \u00B7 ${e.seed.slice('daily-'.length)}`);
+      const wtag = e.topo.warp ? ' Warp' : '';
+      const ctag = e.chain ? ' Chain' : '';
+      this.subtitle.set(`${dims}${hex}${wtag}${ctag} \u00B7 ${e.seed.slice('daily-'.length)}`);
     } else {
       this.title.set(e.topo.kind === 'hex' ? 'Custom Hex' : 'Custom');
       const sd = e.seed.length > 16 ? `${e.seed.slice(0, 15)}\u2026` : e.seed;
@@ -611,7 +636,7 @@ export class FlowStore {
         const done = this.dailyDoneOn(parsed.date);
         if (done.includes(parsed.index)) {
           const nxt = this.nextUndoneDaily(parsed.date, parsed.index);
-          if (nxt !== null) this.daily(nxt);
+          if (nxt !== null) this.daily(nxt, parsed.date);
           else {
             this.showDailies();
             this.toast('All dailies complete — share your results');
@@ -639,7 +664,7 @@ export class FlowStore {
     if (parsed) {
       // Skip already-completed dailies; land on the menu once all 5 are done.
       const nxt = this.nextUndoneDaily(parsed.date, parsed.index);
-      if (nxt !== null) this.daily(nxt);
+      if (nxt !== null) this.daily(nxt, parsed.date);
       else {
         this.showDailies();
         this.toast('All dailies complete');

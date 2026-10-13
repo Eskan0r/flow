@@ -4,9 +4,11 @@ import { ApplicationRef } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { describe, expect, it, vi } from 'vitest';
 import { App } from './app';
+import type { FlowEngine } from './core/flow-engine';
+import type { Cell } from './core/flow-generator';
 import type { FlowStore } from './core/flow-store';
 import { flowChainPath } from './core/flow-generator';
-import { PACKS } from './core/packs';
+import { PACKS, dailySpec } from './core/packs';
 
 function cellXY(r: number, c: number, size: number, side = 400): [number, number] {
   const cell = side / size;
@@ -19,9 +21,18 @@ function pointer(canvas: HTMLCanvasElement, type: string, x: number, y: number):
   canvas.dispatchEvent(ev);
 }
 
+/** Draw cells straight through the engine (no pixels): daily categories
+ *  rotate by date, so canvas geometry can't be assumed here. */
+function drawCells(e: FlowEngine, cells: Cell[], pid = 1): void {
+  e.pointerDown(cells[0][0], cells[0][1], pid);
+  for (let i = 1; i < cells.length; i++) e.pointerMove(cells[i][0], cells[i][1], pid);
+  e.pointerUp(pid);
+}
+
 describe('App', () => {
-  async function boot(): Promise<{ fixture: ComponentFixture<App>; store: FlowStore }> {
+  async function boot(url?: string): Promise<{ fixture: ComponentFixture<App>; store: FlowStore }> {
     localStorage.clear();
+    history.replaceState(null, '', url ?? '/');
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
     const fixture = TestBed.createComponent(App);
     fixture.detectChanges();
@@ -74,17 +85,14 @@ describe('App', () => {
     store.daily(1);
     expect(store.view()).toBe('game');
     fixture.detectChanges();
-    const canvas = boardCanvas();
-    const size = store.engine.size;
-    const sg = store.engine.solution[0];
-    const [x0, y0] = cellXY(sg[0][0], sg[0][1], size);
-    pointer(canvas, 'pointerdown', x0, y0);
-    const [x1, y1] = cellXY(sg[1][0], sg[1][1], size);
-    pointer(canvas, 'pointermove', x1, y1);
-    pointer(canvas, 'pointerup', x1, y1);
-    expect(store.engine.paths[0].length).toBeGreaterThan(0);
+    const e = store.engine;
+    const sg = e.solution[0];
+    e.pointerDown(sg[0][0], sg[0][1], 1);
+    e.pointerMove(sg[1][0], sg[1][1], 1);
+    e.pointerUp(1);
+    expect(e.paths[0].length).toBeGreaterThan(0);
     store.reset();
-    expect(store.engine.paths[0].length).toBeGreaterThan(0);
+    expect(e.paths[0].length).toBeGreaterThan(0);
     expect(store.toastMsg()).toBe('No resets on dailies');
     expect(document.querySelector('[data-testid=reset-btn]')?.hasAttribute('disabled')).toBe(true);
   });
@@ -94,19 +102,9 @@ describe('App', () => {
     store.daily(1);
     expect(store.view()).toBe('game');
     fixture.detectChanges();
-    const canvas = boardCanvas();
-    const size = store.engine.size;
-    for (const sg of store.engine.solution) {
-      const [x0, y0] = cellXY(sg[0][0], sg[0][1], size);
-      pointer(canvas, 'pointerdown', x0, y0);
-      for (let i = 1; i < sg.length; i++) {
-        const [x, y] = cellXY(sg[i][0], sg[i][1], size);
-        pointer(canvas, 'pointermove', x, y);
-      }
-      const [xe, ye] = cellXY(sg[sg.length - 1][0], sg[sg.length - 1][1], size);
-      pointer(canvas, 'pointerup', xe, ye);
-    }
+    for (const sg of store.engine.solution) drawCells(store.engine, sg);
     expect(store.engine.won).toBe(true);
+    store.refresh();
     fixture.detectChanges();
     // Only 1 of 5 done: no copiable share card yet, and no Replay (one-shot).
     expect(document.querySelector('[data-testid=share-btn]')).toBeNull();
@@ -130,19 +128,9 @@ describe('App', () => {
     store.daily(5);
     expect(store.view()).toBe('game');
     fixture.detectChanges();
-    const canvas = boardCanvas();
-    const size = store.engine.size;
-    for (const sg of store.engine.solution) {
-      const [x0, y0] = cellXY(sg[0][0], sg[0][1], size);
-      pointer(canvas, 'pointerdown', x0, y0);
-      for (let i = 1; i < sg.length; i++) {
-        const [x, y] = cellXY(sg[i][0], sg[i][1], size);
-        pointer(canvas, 'pointermove', x, y);
-      }
-      const [xe, ye] = cellXY(sg[sg.length - 1][0], sg[sg.length - 1][1], size);
-      pointer(canvas, 'pointerup', xe, ye);
-    }
+    for (const sg of store.engine.solution) drawCells(store.engine, sg);
     expect(store.engine.won).toBe(true);
+    store.refresh();
     fixture.detectChanges();
     expect(document.querySelector('[data-testid=share-btn]')).toBeTruthy();
     expect(document.querySelector('[data-testid=share-text]')?.textContent).toContain(`roflow daily ${today}`);
@@ -318,5 +306,54 @@ describe('App', () => {
     await fixture.whenStable();
     expect(document.querySelector('[data-testid=next-level-btn]')).toBeNull();
     expect(document.querySelector('[data-testid=prev-level-btn]')).toBeNull();
+  });
+
+  it('boots a daily link through the date rotation, not URL params', async () => {
+    const { store } = await boot('/?seed=daily-2026-09-26-3&size=5');
+    expect(store.view()).toBe('game');
+    expect(store.engine.seed).toBe('daily-2026-09-26-3');
+    // geometry comes from the spec for that date, whatever the params say
+    const spec = dailySpec('2026-09-26', 3);
+    expect(store.engine.rows).toBe(spec.rows);
+    expect(store.engine.cols).toBe(spec.cols);
+    expect(store.engine.topo.kind).toBe(spec.kind);
+    expect(store.engine.warp).toBe(spec.warp ?? false);
+    expect(store.engine.chain).toBe(spec.chain ?? false);
+  });
+
+  it('boots custom seed links with warp/chain flags round-tripped', async () => {
+    const { store } = await boot('/?seed=flagtest&size=6&warp=1&chain=1');
+    expect(store.view()).toBe('game');
+    expect(store.engine.seed).toBe('flagtest');
+    expect(store.engine.warp).toBe(true);
+    expect(store.engine.chain).toBe(true);
+  });
+
+  it('dailies menu shows each board shape and category', async () => {
+    const { fixture, store } = await boot();
+    store.showDailies();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    for (let i = 1; i <= 5; i++) {
+      const btn = document.querySelector(`[data-testid=daily-${i}]`);
+      expect(btn?.textContent).toContain(store.dailyBlurb(i).split(' ')[0]);
+    }
+  });
+
+  it('bumping walls plays no sound but other sounds still fire', async () => {
+    const { store } = await boot();
+    const badSpy = vi.spyOn(store.sound, 'bad');
+    const clickSpy = vi.spyOn(store.sound, 'click');
+    const pack = PACKS.find((p) => p.id === 'regular')!;
+    store.playPackLevel(pack, 1);
+    expect(clickSpy).toHaveBeenCalled();
+    // drag a live stroke straight into a foreign dot (blocked bumps),
+    // then run the HUD sync that would have sounded them
+    const e = store.engine;
+    const a = e.pairs[0][0];
+    const foreign = e.pairs[1][0];
+    drawCells(e, [a, foreign]);
+    store.refresh();
+    expect(badSpy).not.toHaveBeenCalled();
   });
 });

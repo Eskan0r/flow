@@ -54,6 +54,7 @@ section('cutting another pipe, then undo restores it');
   e.loadLevel('seed', 0, 'cut-test', 6);
   // hand-laid deterministic scene (avoids generated-geometry luck):
   // color 0 owns a horizontal pipe; color 1 stroke head sits above its middle.
+  pinPairs(e, [[[4, 4], [4, 5]], [[5, 4], [5, 5]]]);
   e.paths[0] = [[2, 1], [2, 2], [2, 3]];
   e.paths[1] = [[0, 2], [1, 2]];
   e.rebuild();
@@ -75,6 +76,7 @@ section('in-stroke un-cut restores immediately');
 {
   const e = new FlowEngine();
   e.loadLevel('seed', 0, 'uncut-test', 6);
+  pinPairs(e, [[[4, 4], [4, 5]], [[5, 4], [5, 5]]]);
   e.paths[0] = [[2, 1], [2, 2], [2, 3]];
   e.paths[1] = [[0, 2], [1, 2]];
   e.rebuild();
@@ -127,6 +129,7 @@ section('fast drags prefer not cutting rival pipes');
   const e = new FlowEngine();
   e.loadLevel('seed', 0, 'avoid-test', 6);
   // rival owns two cells; cutter head sits above-left with a free lane right
+  pinPairs(e, [[[4, 4], [4, 5]], [[5, 4], [5, 5]]]);
   e.paths[0] = [[2, 0], [2, 1]];
   e.paths[1] = [[0, 2], [1, 1]];
   e.rebuild();
@@ -322,11 +325,9 @@ section('toroidal (warp) boards play end to end');
   w.pointerUp(2);
 }
 
-/** Deterministic chain scenes (hand-laid, no generated-geometry luck).
- *  Default: A's end dot (0,1) touches B's start dot (0,2). */
-function chainScene(chain = true, pairs = [[[0, 0], [0, 1]], [[0, 2], [0, 3]]]) {
-  const e = new FlowEngine();
-  e.loadLevel('seed', 0, 'chain-hand', 5, 'square', 5, 5, null, null, false, chain);
+/** Rewire an engine to fixed pairs (hand-laid scenes must not depend on
+ *  generated dot positions for routing decisions). */
+function pinPairs(e, pairs) {
   e.pairs = pairs;
   e.solution = pairs.map(([a, b]) => [a.slice(), b.slice()]);
   e.numPairs = pairs.length;
@@ -341,6 +342,14 @@ function chainScene(chain = true, pairs = [[[0, 0], [0, 1]], [[0, 2], [0, 3]]]) 
     e.epSet.add(e.key(b[0], b[1]));
   });
   e.rebuild();
+}
+
+/** Deterministic chain scenes (hand-laid, no generated-geometry luck).
+ *  Default: A's end dot (0,1) touches B's start dot (0,2). */
+function chainScene(chain = true, pairs = [[[0, 0], [0, 1]], [[0, 2], [0, 3]]]) {
+  const e = new FlowEngine();
+  e.loadLevel('seed', 0, 'chain-hand', 5, 'square', 5, 5, null, null, false, chain);
+  pinPairs(e, pairs);
   // hand-laid pairs replace the generated ones funnels were built for
   e.chainWalls = [];
   return e;

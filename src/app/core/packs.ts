@@ -2,6 +2,7 @@
  * schedules, and seed namespaces. Framework-free (tested by plain node). */
 
 import type { BoardKind, Mask } from './topology';
+import { defaultPairsForSize } from './flow-generator';
 
 export interface Pack {
   id: string;
@@ -21,6 +22,12 @@ export interface Pack {
   warpForLevel?(n: number): boolean;
   /** True when completing a flow hands the live stroke to a touching dot. */
   chainForLevel?(n: number): boolean;
+  /** Pair count override (rotates density within a size band so same-size
+   *  levels can't converge on one layout; null = density default). */
+  pairsForLevel?(n: number): number;
+  /** Pinned pair counts for levels whose rotated K still collided with an
+   *  earlier level's layout (verified: every pack is duplicate-free). */
+  pairsOverride?: { [level: number]: number };
   seedForLevel(n: number): string;
 }
 
@@ -32,6 +39,12 @@ function band(n: number, bands: Array<[number, number]>): number {
 function squareShape(n: number, sizeForLevel: (n: number) => number): { rows: number; cols: number } {
   const s = sizeForLevel(n);
   return { rows: s, cols: s };
+}
+
+/** Pair-count rotation within a size band: base density ±1 by level, so
+ *  same-size levels draw from disjoint pair-count pools (kills repeats). */
+function rotatedPairs(sizeForLevel: (n: number) => number): (n: number) => number {
+  return (n) => defaultPairsForSize(sizeForLevel(n)) + ((n % 3) - 1);
 }
 
 /** A square/hex pack: shape always mirrors the nominal size. */
@@ -92,6 +105,8 @@ export const PACKS: Pack[] = [
     kind: 'square',
     count: 150,
     sizeForLevel: (n) => band(n, [[12, 5], [40, 6], [80, 7], [115, 8], [150, 9]]),
+    pairsForLevel: rotatedPairs((n) => band(n, [[12, 5], [40, 6], [80, 7], [115, 8], [150, 9]])),
+    pairsOverride: { 12: 4, 34: 7, 73: 8, 95: 10, 103: 9, 109: 9 },
     seedForLevel: (n) => `flow-regular-${n}`,
   }),
   uniformPack({
@@ -102,6 +117,8 @@ export const PACKS: Pack[] = [
     kind: 'square',
     count: 150,
     sizeForLevel: (n) => band(n, [[10, 5], [35, 6], [75, 7], [115, 8], [150, 9]]),
+    pairsForLevel: rotatedPairs((n) => band(n, [[10, 5], [35, 6], [75, 7], [115, 8], [150, 9]])),
+    pairsOverride: { 29: 8, 30: 6, 74: 9, 103: 9 },
     seedForLevel: (n) => `flow-bonus-${n}`,
   }),
   uniformPack({
@@ -122,6 +139,7 @@ export const PACKS: Pack[] = [
     kind: 'square',
     count: 60,
     sizeForLevel: (n) => band(n, [[20, 7], [40, 8], [60, 10]]),
+    pairsForLevel: rotatedPairs((n) => band(n, [[20, 7], [40, 8], [60, 10]])),
     shapeForLevel: (n) => (n <= 20 ? { rows: 5, cols: 7 } : n <= 40 ? { rows: 6, cols: 8 } : { rows: 8, cols: 10 }),
     seedForLevel: (n) => `flow-rectangles-${n}`,
   },
@@ -170,6 +188,7 @@ export const PACKS: Pack[] = [
     kind: 'square',
     count: 60,
     sizeForLevel: (n) => band(n, [[20, 5], [40, 6], [60, 7]]),
+    pairsForLevel: rotatedPairs((n) => band(n, [[20, 5], [40, 6], [60, 7]])),
     seedForLevel: (n) => `flow-warps-${n}`,
     warpForLevel: () => true,
   }),
@@ -181,6 +200,8 @@ export const PACKS: Pack[] = [
     kind: 'square',
     count: 60,
     sizeForLevel: (n) => band(n, [[20, 5], [40, 6], [60, 7]]),
+    pairsForLevel: rotatedPairs((n) => band(n, [[20, 5], [40, 6], [60, 7]])),
+    pairsOverride: { 9: 4, 18: 4 },
     seedForLevel: (n) => `flow-chains-${n}`,
     chainForLevel: () => true,
   }),
@@ -194,6 +215,64 @@ export function packById(id: string): Pack | undefined {
 export const DAILY_COUNT = 5;
 export const DAILY_SIZES = [5, 5, 6, 7, 8];
 export const DAILY_KINDS: BoardKind[] = ['square', 'hex', 'square', 'hex', 'square'];
+
+/** Small string hash (FNV-1a) for deterministic per-date rotation. */
+function hashStr(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+export interface DailySpec {
+  kind: BoardKind;
+  rows: number;
+  cols: number;
+  mask?: Mask;
+  walls?: Mask;
+  warp?: boolean;
+  chain?: boolean;
+  /** Menu tag: 'Warp' | 'Chain' | 'Rect' | 'Odd' | 'Walls' | 'Hex' | ''. */
+  tag: string;
+}
+
+type DailyCat = 'square' | 'hex' | 'chains' | 'rect' | 'odd' | 'walls' | 'warps';
+// Warps stay in the hard slots (4-5) only; everything else rotates anywhere.
+const DAILY_EASY: DailyCat[] = ['square', 'hex', 'chains', 'rect'];
+const DAILY_MID: DailyCat[] = [...DAILY_EASY, 'odd', 'walls'];
+const DAILY_HARD: DailyCat[] = [...DAILY_MID, 'warps'];
+
+/** Full board spec for one of a date's five dailies. Deterministic per
+ *  (date, index) so every client plays the same boards; the seed stays
+ *  `daily-YYYY-MM-DD-i` regardless of category. */
+export function dailySpec(dateStr: string, index: number): DailySpec {
+  const i = Math.min(Math.max(1, index), DAILY_COUNT);
+  const size = DAILY_SIZES[i - 1];
+  const pool = i <= 2 ? DAILY_EASY : i === 3 ? DAILY_MID : DAILY_HARD;
+  const h = hashStr(`${dateStr}:${i}`);
+  switch (pool[h % pool.length]) {
+    case 'hex':
+      return { kind: 'hex', rows: size, cols: size, tag: 'Hex' };
+    case 'chains':
+      return { kind: 'square', rows: size, cols: size, chain: true, tag: 'Chain' };
+    case 'rect':
+      return { kind: 'square', rows: Math.max(4, size - 1), cols: size + 1, tag: 'Rect' };
+    case 'odd': {
+      const masks: Mask[] = size >= 7 ? [polyPlus, polyBand, polyU] : [polyTriangle];
+      return { kind: 'square', rows: size, cols: size, mask: masks[h % masks.length], tag: 'Odd' };
+    }
+    case 'walls': {
+      const w = wallPatternFor((h % WALL_PATTERNS.length) + 1, size, size);
+      return { kind: 'square', rows: size, cols: size, mask: (r, c) => !w(r, c), walls: w, tag: 'Walls' };
+    }
+    case 'warps':
+      return { kind: 'square', rows: size, cols: size, warp: true, tag: 'Warp' };
+    default:
+      return { kind: 'square', rows: size, cols: size, tag: '' };
+  }
+}
 
 export function dailyLabel(d = new Date()): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;

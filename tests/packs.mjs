@@ -1,7 +1,7 @@
 /* Pack definition checks: counts, size schedules, seed uniqueness.
  * Run: node --experimental-strip-types --no-warnings --import ./tests/hooks.mjs tests/packs.mjs
  */
-import { PACKS, DAILY_COUNT, DAILY_KINDS, DAILY_SIZES, FLOW_SITE, dailyLabel, dailySeed, dailyShareCard, parseDailySeed } from '../src/app/core/packs.ts';
+import { PACKS, DAILY_COUNT, DAILY_KINDS, DAILY_SIZES, FLOW_SITE, dailyLabel, dailySeed, dailyShareCard, dailySpec, parseDailySeed } from '../src/app/core/packs.ts';
 import { generateLevel, validateLevel, flowChainPath } from '../src/app/core/flow-generator.ts';
 import { rectTopology } from '../src/app/core/topology.ts';
 
@@ -105,7 +105,8 @@ section('pack levels generate valid puzzles');
     const mask = p.maskForLevel ? p.maskForLevel(n) : undefined;
     const walls = p.wallsForLevel ? p.wallsForLevel(n) : undefined;
     const warp = p.warpForLevel ? p.warpForLevel(n) : false;
-    const lv = generateLevel(p.seedForLevel(n), size, null,
+    const K = p.pairsOverride?.[n] ?? (p.pairsForLevel ? p.pairsForLevel(n) : null);
+    const lv = generateLevel(p.seedForLevel(n), size, K,
       { kind: p.kind, rows: shape.rows, cols: shape.cols, mask, walls, warp });
     if (lv.rows !== shape.rows || lv.cols !== shape.cols) {
       bad++;
@@ -152,9 +153,10 @@ section('chains full sweep');
   let bad = 0;
   for (let n = 1; n <= p.count; n++) {
     const { rows, cols } = p.shapeForLevel(n);
+    const K = p.pairsOverride?.[n] ?? p.pairsForLevel(n);
     let lv;
     try {
-      lv = generateLevel(p.seedForLevel(n), p.sizeForLevel(n), null, { rows, cols });
+      lv = generateLevel(p.seedForLevel(n), p.sizeForLevel(n), K, { rows, cols });
     } catch (err) {
       bad++; console.error(`  THREW: #${n}: ${err && err.message}`); continue;
     }
@@ -172,9 +174,10 @@ section('warps full sweep');
   let bad = 0;
   for (let n = 1; n <= p.count; n++) {
     const { rows, cols } = p.shapeForLevel(n);
+    const K = p.pairsOverride?.[n] ?? p.pairsForLevel(n);
     let lv;
     try {
-      lv = generateLevel(p.seedForLevel(n), p.sizeForLevel(n), null, { rows, cols, warp: true });
+      lv = generateLevel(p.seedForLevel(n), p.sizeForLevel(n), K, { rows, cols, warp: true });
     } catch (err) {
       bad++; console.error(`  THREW: #${n}: ${err && err.message}`); continue;
     }
@@ -183,6 +186,35 @@ section('warps full sweep');
     if (!lv.warp) { bad++; console.error(`  LOST WARP: #${n}`); }
   }
   ok(bad === 0, `all 60 warps levels generate valid (bad=${bad})`);
+}
+
+section('pack levels are all unique');
+{
+  // same dots twice in one pack reads as a repeat level: every level's
+  // pairs layout must be distinct (generated exactly as playPackLevel does)
+  for (const p of PACKS) {
+    const seen = new Set();
+    let dupes = 0;
+    for (let n = 1; n <= p.count; n++) {
+      const size = p.sizeForLevel(n);
+      const shape = p.shapeForLevel(n);
+      const mask = p.maskForLevel ? p.maskForLevel(n) : undefined;
+      const walls = p.wallsForLevel ? p.wallsForLevel(n) : undefined;
+      const warp = p.warpForLevel ? p.warpForLevel(n) : false;
+      const K = p.pairsOverride?.[n] ?? (p.pairsForLevel ? p.pairsForLevel(n) : null);
+      let lv;
+      try {
+        lv = generateLevel(p.seedForLevel(n), size, K,
+          { kind: p.kind, rows: shape.rows, cols: shape.cols, mask, walls, warp });
+      } catch (err) {
+        dupes++; console.error(`  THREW: ${p.id} #${n}: ${err && err.message}`); continue;
+      }
+      const k = JSON.stringify(lv.pairs);
+      if (seen.has(k)) { dupes++; console.error(`  DUPE: ${p.id} #${n}`); }
+      else seen.add(k);
+    }
+    ok(dupes === 0, `${p.id}: all ${p.count} levels unique (dupes=${dupes})`);
+  }
 }
 
 section('daily');
@@ -207,6 +239,65 @@ section('daily');
   }
   ok(JSON.stringify(DAILY_SIZES) === JSON.stringify([5, 5, 6, 7, 8]), 'daily sizes ramp 5-5-6-7-8');
   ok(DAILY_KINDS.includes('hex'), 'hexes appear in dailies');
+}
+
+section('daily category rotation');
+{
+  const dates = [];
+  for (let d = 1; d <= 28; d++) dates.push(`2026-09-${String(d).padStart(2, '0')}`);
+  // deterministic per date: same inputs, same spec (masks compared cell by cell)
+  let wobble = 0;
+  for (const ds of ['2026-09-26', '2026-10-13']) {
+    for (let i = 1; i <= DAILY_COUNT; i++) {
+      const a = dailySpec(ds, i);
+      const b = dailySpec(ds, i);
+      if (a.kind !== b.kind || a.rows !== b.rows || a.cols !== b.cols || a.tag !== b.tag ||
+          !!a.warp !== !!b.warp || !!a.chain !== !!b.chain) wobble++;
+      for (let r = 0; r < a.rows; r++) {
+        for (let c = 0; c < a.cols; c++) {
+          if (!!a.mask !== !!b.mask || (a.mask && a.mask(r, c) !== b.mask(r, c))) wobble++;
+          if (!!a.walls !== !!b.walls || (a.walls && a.walls(r, c) !== b.walls(r, c))) wobble++;
+        }
+      }
+    }
+  }
+  ok(wobble === 0, 'daily specs deterministic per date+index');
+  // warps stay in the hard slots; every category shows up across the month
+  let earlyWarp = 0, hardWarp = 0;
+  const seenTags = new Set();
+  for (const ds of dates) {
+    for (let i = 1; i <= DAILY_COUNT; i++) {
+      const s = dailySpec(ds, i);
+      seenTags.add(s.tag || 'square');
+      if (s.warp) {
+        if (i <= 3) earlyWarp++;
+        else hardWarp++;
+      }
+    }
+  }
+  ok(earlyWarp === 0, 'no warps in daily slots 1-3');
+  ok(hardWarp > 0, `warps appear in hard slots (${hardWarp})`);
+  for (const t of ['square', 'Hex', 'Chain', 'Rect', 'Odd', 'Walls', 'Warp']) {
+    ok(seenTags.has(t), `category ${t} rotates into dailies`);
+  }
+  // every rotated daily generates a valid puzzle under its own spec
+  let bad = 0;
+  for (const ds of dates.slice(0, 14)) {
+    for (let i = 1; i <= DAILY_COUNT; i++) {
+      const s = dailySpec(ds, i);
+      let lv;
+      try {
+        lv = generateLevel(`daily-${ds}-${i}`, Math.max(s.rows, s.cols), null,
+          { kind: s.kind, rows: s.rows, cols: s.cols, mask: s.mask, walls: s.walls, warp: !!s.warp });
+      } catch (err) {
+        bad++; console.error(`  THREW: ${ds} #${i}: ${err && err.message}`); continue;
+      }
+      const v = validateLevel(lv);
+      if (!v.ok) { bad++; console.error(`  INVALID: ${ds} #${i}: ${v.errors[0]}`); continue; }
+      if (!!s.warp !== !!lv.warp) { bad++; console.error(`  WARP MISMATCH: ${ds} #${i}`); }
+    }
+  }
+  ok(bad === 0, `70 rotated dailies all valid under their specs (bad=${bad})`);
 }
 
 section('share card');
