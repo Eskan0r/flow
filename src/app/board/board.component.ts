@@ -249,6 +249,9 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
 
     // Ghost layer: all eight translated copies of the flow content. Each
     // margin slice therefore shows the continuation from the opposite seam.
+    // Axis tiles are clipped to their straight bands: without this, three
+    // tiles would overlap in each corner square and only the diagonal one
+    // is torus-correct there. Diagonals touch only their corner square.
     const cc = this.warpGhostLayer(canvas.width, canvas.height);
     if (!cc) return;
     cc.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -256,6 +259,15 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
       for (let j = -1; j <= 1; j++) {
         if (i === 0 && j === 0) continue;
         cc.save();
+        if (i !== 0 && j === 0) {
+          cc.beginPath();
+          cc.rect(i < 0 ? 0 : m.ox + bw, m.oy, m.ox, bh);
+          cc.clip();
+        } else if (i === 0 && j !== 0) {
+          cc.beginPath();
+          cc.rect(m.ox, j < 0 ? 0 : m.oy + bh, bw, m.oy);
+          cc.clip();
+        }
         cc.translate(i * bw, j * bh);
         drawFlows(cc);
         cc.restore();
@@ -299,22 +311,29 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
   }
 
   /** Limits the ghost layer to the margins outside the board and fades it
-   *  from the seam outward. Both passes fill the whole canvas so
-   *  'destination-in' multiplies alpha instead of clearing it; the two
-   *  peaks multiply, so 0.55 per pass lands the seam at ~0.30 (a faint
-   *  echo, not a second pipe). */
+   *  outward. The ghost holds peak through the inner part of the margin and
+   *  only dissolves near the outer edge. Both passes fill the whole canvas
+   *  so 'destination-in' multiplies alpha instead of clearing it; the two
+   *  peaks multiply, so 0.65 per pass lands the seam at ~0.42 (a readable
+   *  mirror that still sits clearly under the board). */
   private fadeWarpGhost(cc: CanvasRenderingContext2D, W: number, H: number, mx: number, my: number): void {
     const zero = 'rgba(0,0,0,0)';
-    const peak = 'rgba(0,0,0,0.55)';
+    const peak = 'rgba(0,0,0,1)';
+    // Fraction of the margin that holds peak before the fade-out begins.
+    const hold = 0.45;
     const hg = cc.createLinearGradient(0, 0, W, 0);
     hg.addColorStop(0, zero);
+    hg.addColorStop((mx / W) * hold, peak);
     hg.addColorStop(mx / W, peak);
     hg.addColorStop(1 - mx / W, peak);
+    hg.addColorStop(1 - (mx / W) * hold, peak);
     hg.addColorStop(1, zero);
     const vg = cc.createLinearGradient(0, 0, 0, H);
     vg.addColorStop(0, zero);
+    vg.addColorStop((my / H) * hold, peak);
     vg.addColorStop(my / H, peak);
     vg.addColorStop(1 - my / H, peak);
+    vg.addColorStop(1 - (my / H) * hold, peak);
     vg.addColorStop(1, zero);
     cc.globalCompositeOperation = 'destination-in';
     cc.fillStyle = hg;
