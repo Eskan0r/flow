@@ -192,7 +192,8 @@ export class FlowStore {
     const { rows, cols } = p.shapeForLevel(level);
     const mask = p.maskForLevel ? p.maskForLevel(level) : null;
     const walls = p.wallsForLevel ? p.wallsForLevel(level) : null;
-    this.engine.loadLevel('seed', 0, p.seedForLevel(level), p.sizeForLevel(level), p.kind, rows, cols, mask, walls);
+    const warp = p.warpForLevel ? p.warpForLevel(level) : false;
+    this.engine.loadLevel('seed', 0, p.seedForLevel(level), p.sizeForLevel(level), p.kind, rows, cols, mask, walls, warp);
     this.view.set('game');
     this.afterLoad();
     if (announce) this.sound.click();
@@ -214,10 +215,17 @@ export class FlowStore {
   }
 
   newRandom(): void {
-    const sd = randomSeed();
+    // Different seeds can still land on the same small-board layout, so
+    // re-roll until the puzzle actually changes (keeps "New" from replaying).
+    const prevKey = JSON.stringify(this.engine.pairs);
+    let sd = randomSeed();
+    for (let t = 0; t < 6; t++) {
+      this.engine.loadLevel('seed', 0, sd, this.engine.size, this.kind());
+      if (JSON.stringify(this.engine.pairs) !== prevKey || t === 5) break;
+      sd = randomSeed();
+    }
     this.seedInput.set(sd);
     this.pack.set(null);
-    this.engine.loadLevel('seed', 0, sd, this.engine.size, this.kind());
     this.view.set('game');
     this.afterLoad();
   }
@@ -516,9 +524,10 @@ export class FlowStore {
     this.size.set(e.size);
     const p = this.pack();
     const dims = `${e.rows} \u00D7 ${e.cols}`;
+    const tag = e.topo.warp ? ' warp' : e.topo.kind === 'hex' ? ' hex' : '';
     if (p) {
-    this.title.set(`${p.name} \u00B7 ${this.packLevel()}`);
-    this.subtitle.set(`${dims} \u00B7 ${e.numPairs} colors`);
+      this.title.set(`${p.name} \u00B7 ${this.packLevel()}`);
+      this.subtitle.set(`${dims}${tag} \u00B7 ${e.numPairs} colors`);
     } else if (e.seed.startsWith('daily-')) {
       this.title.set('Daily Puzzle');
       const hex = e.topo.kind === 'hex' ? ' Hex' : '';

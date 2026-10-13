@@ -300,6 +300,27 @@ section('wall boards play end to end');
   ok(e.win && (e.win.stars === 3 || e.win.stars === 1), 'wall win graded');
 }
 
+section('toroidal (warp) boards play end to end');
+{
+  const e = new FlowEngine();
+  e.loadLevel('seed', 0, 'warpplay-test', 5, 'square', 5, 5, null, null, true);
+  ok(e.warp === true && e.topo.warp === true, 'engine enables warp topology');
+  ok(e.topo.neighbors(0, 0).some(([r, c]) => r === 4 && c === 0), 'engine honors wrapped adjacency');
+  e.solution.forEach((sg) => drawPath(e, sg));
+  ok(e.won, 'warp board won by drawing all solutions');
+  ok(e.filledPct() === 100, 'warp board 100% filled');
+  // engine stepping across a seam works (move through the wrap edge)
+  const w = new FlowEngine();
+  w.loadLevel('seed', 0, 'warpplay-step', 5, 'square', 5, 5, null, null, true);
+  const [a] = w.pairs[0];
+  w.pointerDown(a[0], a[1], 2);
+  const nb = w.topo.neighbors(a[0], a[1]).find(([r, c]) => r !== a[0]);
+  ok(!!nb, 'has a vertical neighbor to step to');
+  w.pointerMove(nb[0], nb[1], 2);
+  ok(w.paths[0].length === 2, 'stroke advanced through a (possibly wrapped) neighbor');
+  w.pointerUp(2);
+}
+
 console.log(`\n----------------------------------------\nENGINE: PASS ${pass} · FAIL ${fail}`);
 if (fail) process.exit(1);
 else console.log('ALL ENGINE CHECKS PASSED');

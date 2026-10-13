@@ -23,6 +23,8 @@ export interface FlowLevel {
   mask?: Mask;
   /** Interior wall cells (rendering hint; subset of the blocked cells). */
   walls?: Mask;
+  /** Toroidal edges (square boards only). */
+  warp?: boolean;
 }
 
 export interface LevelStats {
@@ -193,10 +195,14 @@ export function analyzeCut(path: Cell[], topo: Topology, lens: number[]): CutInf
     for (let s = 0; s < K; s++) {
       for (const cell of segs[s]) segGrid[cell[0]][cell[1]] = s;
     }
-    for (let r = 0; r < rows - 1; r++) {
-      for (let c = 0; c < cols - 1; c++) {
+    const rMax = topo.warp ? rows : rows - 1;
+    const cMax = topo.warp ? cols : cols - 1;
+    for (let r = 0; r < rMax; r++) {
+      for (let c = 0; c < cMax; c++) {
+        const r1 = (r + 1) % rows;
+        const c1 = (c + 1) % cols;
         const a = segGrid[r][c];
-        if (a !== -1 && a === segGrid[r + 1][c] && a === segGrid[r][c + 1] && a === segGrid[r + 1][c + 1]) mono2x2++;
+        if (a !== -1 && a === segGrid[r1][c] && a === segGrid[r][c1] && a === segGrid[r1][c1]) mono2x2++;
       }
     }
   }
@@ -362,6 +368,8 @@ export interface GenerateOptions {
   mask?: Mask;
   /** Interior wall cells (must be a subset of the blocked cells). */
   walls?: Mask;
+  /** Toroidal edges (square boards only). */
+  warp?: boolean;
 }
 
 interface Candidate {
@@ -406,12 +414,12 @@ export function generateLevel(
     ? seededRng(`${String(seedString)}::hex:${rows}x${cols}:${K}`)
     : masked
       ? seededRng(`${String(seedString)}::mask:${rows}x${cols}:${K}`)
-      : seededRng(`${String(seedString)}::${rows}x${cols}:${K}`);
+      : seededRng(`${String(seedString)}::${rows}x${cols}:${K}${opts.warp ? ':warp' : ''}`);
   const topo: Topology = kind === 'hex'
     ? hexTopology(rows, cols)
     : masked
       ? maskTopology(rows, cols, opts.mask as Mask, opts.walls)
-      : rectTopology(rows, cols);
+      : rectTopology(rows, cols, opts.warp);
   const total = topo.total;
   const timeBudgetMs = opts.timeBudgetMs ?? 1400;
   const maxPaths = opts.maxPaths ?? 70;
@@ -431,6 +439,7 @@ export function generateLevel(
     cols,
     mask: topo.mask,
     walls: topo.walls,
+    warp: topo.warp,
     pairs: carved.pairs,
     solution: carved.solution,
     stats: {
@@ -502,6 +511,18 @@ export function generateLevel(
     // A wall/odd board can force more straights than the clean cap allows;
     // accept the valid carve at the default density before giving up.
     if (maskBestEffort) return maskBestEffort;
+    // One deep, slow attempt before giving up: thin shapes sometimes need a
+    // wider search and more tries per flow than the salts above use.
+    const deep = carveLevel(String(seedString), topo, K, {
+      timeBudgetMs: 2500,
+      relaxShape: true,
+      triesPerFlow: 60,
+      pathBudget: 20000,
+    });
+    if (deep) {
+      const info = analyzeCut(deep.solution.flat(), topo, deep.solution.map((sg) => sg.length));
+      if (info.touches === 0 && info.mono2x2 === 0) return mkLevel(deep, info, 'relaxed');
+    }
     throw new Error(`mask carve failed for seed ${JSON.stringify(String(seedString))} (${rows}x${cols})`);
   }
 
@@ -579,6 +600,7 @@ export function generateLevel(
       kind,
       rows,
       cols,
+      warp: topo.warp,
       pairs: segs.map((sg): [Cell, Cell] => [[sg[0][0], sg[0][1]], [sg[sg.length - 1][0], sg[sg.length - 1][1]]]),
       solution: segs.map((sg) => sg.map((cell): Cell => [cell[0], cell[1]])),
       stats: {
@@ -594,8 +616,25 @@ export function generateLevel(
       },
     };
   }
-  // Absolute last resort (should never happen): one snake flow covering the
-  // board. Solvable by construction; flagged dirty so validation retries it.
+  // Absolute last resort (should never happen). The rectangle serpentine is
+  // NOT a valid torus path (its two ends meet across the seam and the wrap
+  // gives edge cells an extra same-color neighbor), so warp boards carve
+  // instead; if that fails too, throw so FlowEngine retries another salt.
+  if (topo.warp) {
+    const carved = carveLevel(String(seedString), topo, K, {
+      timeBudgetMs: 2500,
+      relaxShape: true,
+      triesPerFlow: 60,
+      pathBudget: 20000,
+    });
+    if (carved) {
+      const info = analyzeCut(carved.solution.flat(), topo, carved.solution.map((sg) => sg.length));
+      if (info.touches === 0 && info.mono2x2 === 0) return mkLevel(carved, info, 'dirty');
+    }
+    throw new Error(`warp generation failed for seed ${JSON.stringify(String(seedString))} (${rows}x${cols})`);
+  }
+  // A planar single-flow snake covering the board. Solvable by construction;
+  // flagged dirty so validation retries it.
   const snake = buildSnake(rows, cols);
   const ends: [Cell, Cell] = [
     [snake[0][0], snake[0][1]],
@@ -609,6 +648,7 @@ export function generateLevel(
     kind,
     rows,
     cols,
+    warp: topo.warp,
     pairs: [ends],
     solution: [snake.map((cell): Cell => [cell[0], cell[1]])],
     stats: {
@@ -633,8 +673,8 @@ export function validateLevel(level: FlowLevel, topo?: Topology): ValidationResu
   const t = topo ?? (level.kind === 'hex'
     ? hexTopology(level.rows ?? size, level.cols ?? size)
     : level.mask
-      ? maskTopology(level.rows ?? size, level.cols ?? size, level.mask)
-      : rectTopology(level.rows ?? size, level.cols ?? size));
+      ? maskTopology(level.rows ?? size, level.cols ?? size, level.mask, level.walls)
+      : rectTopology(level.rows ?? size, level.cols ?? size, level.warp));
   const { rows, cols } = t;
   const total = t.total;
   if (!pairs || pairs.length !== numPairs) errors.push(`pairs length ${pairs && pairs.length} != ${numPairs}`);
@@ -682,10 +722,14 @@ export function validateLevel(level: FlowLevel, topo?: Topology): ValidationResu
     });
   }
   if (t.kind === 'square') {
-    for (let r = 0; r < rows - 1; r++) {
-      for (let c = 0; c < cols - 1; c++) {
+    const rMax = t.warp ? rows : rows - 1;
+    const cMax = t.warp ? cols : cols - 1;
+    for (let r = 0; r < rMax; r++) {
+      for (let c = 0; c < cMax; c++) {
+        const r1 = (r + 1) % rows;
+        const c1 = (c + 1) % cols;
         const a = segGrid[r][c];
-        if (a !== -1 && a === segGrid[r + 1][c] && a === segGrid[r][c + 1] && a === segGrid[r + 1][c + 1]) {
+        if (a !== -1 && a === segGrid[r1][c] && a === segGrid[r][c1] && a === segGrid[r1][c1]) {
           errors.push(`2x2 mono at ${r},${c} color ${a}`);
         }
       }

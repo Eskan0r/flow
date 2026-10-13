@@ -180,6 +180,31 @@ section('wall topology (full rect minus enclosed walls)');
   ok(throughWall === 0, 'stepOptions never route through a wall');
 }
 
+section('toroidal (warp) topology');
+{
+  const t = rectTopology(5, 6, true);
+  ok(t.warp === true, 'warp topology flagged');
+  ok(t.inBounds(0, 0) && t.inBounds(4, 5), 'inBounds unchanged (cells stay inside)');
+  const nb = t.neighbors(0, 0);
+  ok(nb.length === 4, 'torus corner still has 4 neighbors');
+  ok(nb.some(([r, c]) => r === 4 && c === 0) && nb.some(([r, c]) => r === 0 && c === 5), 'edges wrap to opposite side');
+  ok(t.neighbors(0, 5).some(([r, c]) => r === 0 && c === 0), 'left edge wraps to right');
+  ok(t.distance([0, 0], [0, 5]) === 1, `toroidal distance short-circuits seam (got ${t.distance([0, 0], [0, 5])})`);
+  ok(t.distance([0, 0], [4, 0]) === 1, 'vertical seam also wraps');
+  ok(t.distance([2, 2], [2, 3]) === 1, 'local distance unchanged');
+  ok(t.isBorder([0, 0]) === false && t.isBorder([2, 2]) === false, 'no border on a torus');
+  ok(t.stepOptions([0, 0], [0, 5]).every(([r, c]) => t.neighbors(0, 0).some(([x, y]) => x === r && y === c)), 'stepOptions use the wrapped grid');
+  // a straight horizontal line wrapping the seam is still collinear
+  const straight = [[0, 4], [0, 5], [0, 0], [0, 1]].map(([r, c]) => [r, c]);
+  ok(t.collinear(straight), 'wrapped straight line stays collinear');
+  // wrap neighbor round-trips never leave the bounds
+  let leak = 0;
+  for (let r = 0; r < 5; r++) for (let c = 0; c < 6; c++) {
+    for (const [nr, nc] of t.neighbors(r, c)) if (!t.inBounds(nr, nc)) leak++;
+  }
+  ok(leak === 0, 'wrapped neighbors stay in bounds');
+}
+
 section('snake validity on both topologies');
 {
   for (const size of [4, 5, 6, 7, 8, 9]) {

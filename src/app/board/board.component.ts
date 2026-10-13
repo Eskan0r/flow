@@ -16,7 +16,7 @@ import {
 } from '@angular/core';
 import { FlowStore } from '../core/flow-store';
 import { hexCellCenter, hexCornerOffsets, hexLayout, hexPixelToCell } from '../core/topology';
-import type { HexLayout } from '../core/topology';
+import type { Cell, HexLayout } from '../core/topology';
 
 const PALETTE = [
   '#ff2222', '#7ac943', '#29a8ff', '#ffe135', '#ff8c00', '#b04df0',
@@ -53,6 +53,7 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
   private cssH = 300;
   private hexLay: HexLayout | null = null;
   private ro: ResizeObserver | null = null;
+  private warpGhost: HTMLCanvasElement | null = null;
 
   constructor() {
     // Repaint whenever the store reports an engine mutation (new level,
@@ -104,10 +105,13 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
       w = Math.floor(this.hexLay.w);
       h = Math.floor(this.hexLay.h);
     } else {
-      const cell = Math.max(16, Math.floor(Math.min(availW / e.topo.cols, availH / e.topo.rows)));
       this.hexLay = null;
-      w = cell * e.topo.cols;
-      h = cell * e.topo.rows;
+      // Warp boards reserve half a cell of margin on every side for the
+      // mirrored, fading continuation of wrapped pipes.
+      const extra = e.topo.warp ? 1 : 0;
+      const cell = Math.max(16, Math.floor(Math.min(availW / (e.topo.cols + extra), availH / (e.topo.rows + extra))));
+      w = cell * (e.topo.cols + extra);
+      h = cell * (e.topo.rows + extra);
     }
     this.cssW = w;
     this.cssH = h;
@@ -125,9 +129,18 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
       const p = hexCellCenter(this.hexLay, r, c);
       return [p.x, p.y];
     }
-    const cellW = this.cssW / e.topo.cols;
-    const cellH = this.cssH / e.topo.rows;
-    return [(c + 0.5) * cellW, (r + 0.5) * cellH];
+    const m = this.squareMetrics();
+    return [m.ox + (c + 0.5) * m.w, m.oy + (r + 0.5) * m.h];
+  }
+
+  /** Square-grid pixel metrics. Warp boards keep a half-cell margin around
+   *  the board (the ghost bleed lives there), so the origin is offset. */
+  private squareMetrics(): { w: number; h: number; ox: number; oy: number } {
+    const e = this.store.engine;
+    const extra = e.topo.warp ? 1 : 0;
+    const w = this.cssW / (e.topo.cols + extra);
+    const h = this.cssH / (e.topo.rows + extra);
+    return { w, h, ox: e.topo.warp ? w / 2 : 0, oy: e.topo.warp ? h / 2 : 0 };
   }
 
   private draw(): void {
@@ -152,61 +165,228 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
       edge = s * 0.12;
     } else {
       if (e.topo.mask) this.drawPolyGrid(g);
-      else this.drawSquareGrid(g);
-      const cell = Math.min(this.cssW / e.topo.cols, this.cssH / e.topo.rows);
+      else if (!e.topo.warp) this.drawSquareGrid(g);
+      const m = this.squareMetrics();
+      const cell = Math.min(m.w, m.h);
       pipeW = cell * 0.62;
       dotR = cell * 0.31;
       edge = 3;
     }
 
-    g.lineCap = 'round';
-    g.lineJoin = 'round';
-    for (let i = 0; i < e.numPairs; i++) {
-      const path = e.paths[i];
-      if (path.length < 2) continue;
-      const col = PALETTE[i % PALETTE.length];
-      const pts = path.map(([r, c]) => this.center(r, c));
-      g.strokeStyle = 'rgba(0,0,0,0.55)';
-      g.lineWidth = pipeW + edge;
-      g.beginPath();
-      g.moveTo(pts[0][0], pts[0][1]);
-      for (let k = 1; k < pts.length; k++) g.lineTo(pts[k][0], pts[k][1]);
-      g.stroke();
-      g.strokeStyle = col;
-      g.lineWidth = pipeW;
-      g.beginPath();
-      g.moveTo(pts[0][0], pts[0][1]);
-      for (let k = 1; k < pts.length; k++) g.lineTo(pts[k][0], pts[k][1]);
-      g.stroke();
-    }
-    for (let i = 0; i < e.numPairs; i++) {
-      const col = PALETTE[i % PALETTE.length];
-      for (let k = 0; k < 2; k++) {
-        const [x, y] = this.center(e.pairs[i][k][0], e.pairs[i][k][1]);
-        g.beginPath();
-        g.arc(x, y, dotR + edge * 0.7, 0, Math.PI * 2);
-        g.fillStyle = '#000';
-        g.fill();
-        g.beginPath();
-        g.arc(x, y, dotR, 0, Math.PI * 2);
-        g.fillStyle = col;
-        g.fill();
-        if (e.done[i]) {
-          g.beginPath();
-          g.arc(x, y, dotR + edge * 1.2, 0, Math.PI * 2);
-          g.strokeStyle = '#fff';
-          g.lineWidth = 2;
-          g.stroke();
+    const drawFlows = (ctx: CanvasRenderingContext2D): void => {
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      for (let i = 0; i < e.numPairs; i++) {
+        const path = e.paths[i];
+        if (path.length < 2) continue;
+        const col = PALETTE[i % PALETTE.length];
+        const strokes = this.pathStrokes(path);
+        const paint = (width: number, style: string): void => {
+          ctx.lineWidth = width;
+          ctx.strokeStyle = style;
+          for (const pts of strokes) {
+            ctx.beginPath();
+            ctx.moveTo(pts[0][0], pts[0][1]);
+            for (let k = 1; k < pts.length; k++) ctx.lineTo(pts[k][0], pts[k][1]);
+            ctx.stroke();
+          }
+        };
+        paint(pipeW + edge, 'rgba(0,0,0,0.55)');
+        paint(pipeW, col);
+      }
+      for (let i = 0; i < e.numPairs; i++) {
+        const col = PALETTE[i % PALETTE.length];
+        for (let k = 0; k < 2; k++) {
+          const [x, y] = this.center(e.pairs[i][k][0], e.pairs[i][k][1]);
+          ctx.beginPath();
+          ctx.arc(x, y, dotR + edge * 0.7, 0, Math.PI * 2);
+          ctx.fillStyle = '#000';
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(x, y, dotR, 0, Math.PI * 2);
+          ctx.fillStyle = col;
+          ctx.fill();
+          if (e.done[i]) {
+            ctx.beginPath();
+            ctx.arc(x, y, dotR + edge * 1.2, 0, Math.PI * 2);
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+          }
         }
       }
+      if (e.active) {
+        const [x, y] = this.center(e.active.last[0], e.active.last[1]);
+        ctx.beginPath();
+        ctx.arc(x, y, dotR * 0.45, 0, Math.PI * 2);
+        ctx.fillStyle = '#fff';
+        ctx.fill();
+      }
+    };
+    if (e.topo.warp) {
+      this.drawWarpSeams(g, drawFlows);
+    } else {
+      drawFlows(g);
     }
-    if (e.active) {
-      const [x, y] = this.center(e.active.last[0], e.active.last[1]);
-      g.beginPath();
-      g.arc(x, y, dotR * 0.45, 0, Math.PI * 2);
-      g.fillStyle = '#fff';
-      g.fill();
+  }
+
+  /** Warp boards: the board reads as a window on a torus. The interior stays
+   *  fully opaque up to a glowing dashed frame; past each seam a half-cell
+   *  margin shows the opposite edge's content mirrored, fading outward. */
+  private drawWarpSeams(
+    g: CanvasRenderingContext2D,
+    drawFlows: (ctx: CanvasRenderingContext2D) => void,
+  ): void {
+    const canvas = this.canvasRef()?.nativeElement;
+    if (!canvas) return;
+    const dpr = Math.min(2.5, window.devicePixelRatio || 1);
+    const e = this.store.engine;
+    const W = this.cssW;
+    const H = this.cssH;
+    const m = this.squareMetrics();
+    const bw = e.topo.cols * m.w;
+    const bh = e.topo.rows * m.h;
+
+    // Ghost layer: all eight translated copies of the flow content. Each
+    // margin slice therefore shows the continuation from the opposite seam.
+    const cc = this.warpGhostLayer(canvas.width, canvas.height);
+    if (!cc) return;
+    cc.setTransform(dpr, 0, 0, dpr, 0, 0);
+    for (let i = -1; i <= 1; i++) {
+      for (let j = -1; j <= 1; j++) {
+        if (i === 0 && j === 0) continue;
+        cc.save();
+        cc.translate(i * bw, j * bh);
+        drawFlows(cc);
+        cc.restore();
+      }
     }
+    this.fadeWarpGhost(cc, W, H, m.ox, m.oy);
+
+    g.drawImage(cc.canvas, 0, 0, cc.canvas.width, cc.canvas.height, 0, 0, W, H);
+
+    // The real board paints last and opaque, clipped at the seams, so the
+    // ghosts can never sit on top of the live board or the active head.
+    g.save();
+    g.beginPath();
+    g.rect(m.ox, m.oy, bw, bh);
+    g.clip();
+    g.fillStyle = '#000';
+    g.fillRect(m.ox, m.oy, bw, bh);
+    this.drawSquareGrid(g, false);
+    drawFlows(g);
+    g.restore();
+    this.drawWarpFrame(g, m.w, m.h, m.ox, m.oy, bw, bh);
+  }
+
+  /** Cached offscreen layer for the warp ghost composite (cleared per use). */
+  private warpGhostLayer(w: number, h: number): CanvasRenderingContext2D | null {
+    let cv = this.warpGhost;
+    if (!cv) {
+      cv = document.createElement('canvas');
+      this.warpGhost = cv;
+    }
+    if (cv.width !== w || cv.height !== h) {
+      cv.width = w;
+      cv.height = h;
+    }
+    const ctx = cv.getContext('2d');
+    if (ctx) {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+    }
+    return ctx;
+  }
+
+  /** Limits the ghost layer to the margins outside the board and fades it
+   *  from the seam outward. Both passes fill the whole canvas so
+   *  'destination-in' multiplies alpha instead of clearing it; the two
+   *  peaks multiply, so 0.55 per pass lands the seam at ~0.30 (a faint
+   *  echo, not a second pipe). */
+  private fadeWarpGhost(cc: CanvasRenderingContext2D, W: number, H: number, mx: number, my: number): void {
+    const zero = 'rgba(0,0,0,0)';
+    const peak = 'rgba(0,0,0,0.55)';
+    const hg = cc.createLinearGradient(0, 0, W, 0);
+    hg.addColorStop(0, zero);
+    hg.addColorStop(mx / W, peak);
+    hg.addColorStop(1 - mx / W, peak);
+    hg.addColorStop(1, zero);
+    const vg = cc.createLinearGradient(0, 0, 0, H);
+    vg.addColorStop(0, zero);
+    vg.addColorStop(my / H, peak);
+    vg.addColorStop(1 - my / H, peak);
+    vg.addColorStop(1, zero);
+    cc.globalCompositeOperation = 'destination-in';
+    cc.fillStyle = hg;
+    cc.fillRect(0, 0, W, H);
+    cc.fillStyle = vg;
+    cc.fillRect(0, 0, W, H);
+    cc.globalCompositeOperation = 'source-over';
+  }
+
+  /** Glowing dashed border marking the warp seams (all four sides wrap). */
+  private drawWarpFrame(
+    g: CanvasRenderingContext2D,
+    cellW: number,
+    cellH: number,
+    ox: number,
+    oy: number,
+    bw: number,
+    bh: number,
+  ): void {
+    g.save();
+    g.lineCap = 'round';
+    g.setLineDash([cellW * 0.22, cellW * 0.16]);
+    g.strokeStyle = 'rgba(255,255,255,0.8)';
+    g.lineWidth = 2;
+    g.shadowColor = 'rgba(150,190,255,0.8)';
+    g.shadowBlur = 8;
+    g.strokeRect(ox + 1, oy + 1, bw - 2, bh - 2);
+    g.restore();
+  }
+
+  /** Pixel polylines for a flow, one stroke per seam-to-seam run. A step that
+   *  wraps ends its stroke with a stub to the seam it exits and starts the
+   *  next stroke with a stub from the opposite seam, so every point stays
+   *  within half a cell of its true cell: the board clip keeps the whole
+   *  flow opaque and only the margin bleed stays dim. Without the split,
+   *  points after a wrap would stay displaced by a full board and the
+   *  wrapped continuation would only survive as a ghost. */
+  private pathStrokes(path: Cell[]): Array<Array<[number, number]>> {
+    const e = this.store.engine;
+    const warp = !!e.topo.warp;
+    const m = this.squareMetrics();
+    const strokes: Array<Array<[number, number]>> = [[this.center(path[0][0], path[0][1])]];
+    for (let k = 1; k < path.length; k++) {
+      const [pr, pc] = path[k - 1];
+      const [r, c] = path[k];
+      let dr = r - pr;
+      let dc = c - pc;
+      let wrapped = false;
+      if (warp) {
+        const rawR = dr;
+        const rawC = dc;
+        if (dr > e.topo.rows / 2) dr -= e.topo.rows;
+        else if (dr < -e.topo.rows / 2) dr += e.topo.rows;
+        if (dc > e.topo.cols / 2) dc -= e.topo.cols;
+        else if (dc < -e.topo.cols / 2) dc += e.topo.cols;
+        wrapped = dr !== rawR || dc !== rawC;
+      }
+      const tail = strokes[strokes.length - 1];
+      if (wrapped) {
+        const prev = tail[tail.length - 1];
+        tail.push([prev[0] + dc * m.w, prev[1] + dr * m.h]);
+        const [cx, cy] = this.center(r, c);
+        strokes.push([
+          [cx - (dc * m.w) / 2, cy - (dr * m.h) / 2],
+          [cx, cy],
+        ]);
+      } else {
+        const prev = tail[tail.length - 1];
+        tail.push([prev[0] + dc * m.w, prev[1] + dr * m.h]);
+      }
+    }
+    return strokes;
   }
 
   private drawPolyGrid(g: CanvasRenderingContext2D): void {
@@ -270,29 +450,34 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
     g.stroke();
   }
 
-  private drawSquareGrid(g: CanvasRenderingContext2D): void {
+  private drawSquareGrid(g: CanvasRenderingContext2D, frame = true): void {
     const e = this.store.engine;
     const cols = e.topo.cols;
     const rows = e.topo.rows;
-    const cellW = this.cssW / cols;
-    const cellH = this.cssH / rows;
+    const m = this.squareMetrics();
+    const x0 = m.ox;
+    const y0 = m.oy;
+    const bw = cols * m.w;
+    const bh = rows * m.h;
     g.strokeStyle = '#232323';
     g.lineWidth = 1;
     g.beginPath();
     for (let i = 1; i < cols; i++) {
-      const p = Math.round(i * cellW) + 0.5;
-      g.moveTo(p, 0);
-      g.lineTo(p, this.cssH);
+      const p = Math.round(x0 + i * m.w) + 0.5;
+      g.moveTo(p, y0);
+      g.lineTo(p, y0 + bh);
     }
     for (let i = 1; i < rows; i++) {
-      const p = Math.round(i * cellH) + 0.5;
-      g.moveTo(0, p);
-      g.lineTo(this.cssW, p);
+      const p = Math.round(y0 + i * m.h) + 0.5;
+      g.moveTo(x0, p);
+      g.lineTo(x0 + bw, p);
     }
     g.stroke();
-    g.strokeStyle = '#3d3d3d';
-    g.lineWidth = 2;
-    g.strokeRect(1, 1, this.cssW - 2, this.cssH - 2);
+    if (frame) {
+      g.strokeStyle = '#3d3d3d';
+      g.lineWidth = 2;
+      g.strokeRect(x0 + 1, y0 + 1, bw - 2, bh - 2);
+    }
   }
 
   private drawHexGrid(g: CanvasRenderingContext2D): void {
@@ -316,7 +501,7 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
     g.stroke();
   }
 
-  private evCell(ev: PointerEvent): [number, number] | null {
+  private evCell(ev: PointerEvent, wrap = false): [number, number] | null {
     const canvas = this.canvasRef()?.nativeElement;
     if (!canvas) return null;
     const e = this.store.engine;
@@ -326,10 +511,24 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
     if (e.topo.kind === 'hex' && this.hexLay) {
       return hexPixelToCell(this.hexLay, e.topo.rows, e.topo.cols, x, y);
     }
-    const cellW = rect.width / e.topo.cols;
-    const cellH = rect.height / e.topo.rows;
-    const c = Math.floor(x / cellW);
-    const r = Math.floor(y / cellH);
+    const cellW = rect.width / (e.topo.cols + (e.topo.warp ? 1 : 0));
+    const cellH = rect.height / (e.topo.rows + (e.topo.warp ? 1 : 0));
+    const offX = e.topo.warp ? cellW / 2 : 0;
+    const offY = e.topo.warp ? cellH / 2 : 0;
+    const c = Math.floor((x - offX) / cellW);
+    const r = Math.floor((y - offY) / cellH);
+    if (wrap && e.topo.warp) {
+      // A captured drag that leaves the canvas continues on the opposite
+      // edge, so the stroke wraps around like the pipes do. Raw coords are
+      // clamped to one cell past each edge so a far overshoot can't jump the
+      // head across the whole board.
+      const rr = Math.max(-1, Math.min(r, e.topo.rows));
+      const cc2 = Math.max(-1, Math.min(c, e.topo.cols));
+      return [
+        ((rr % e.topo.rows) + e.topo.rows) % e.topo.rows,
+        ((cc2 % e.topo.cols) + e.topo.cols) % e.topo.cols,
+      ];
+    }
     if (!e.inBounds(r, c)) return null;
     return [r, c];
   }
@@ -358,7 +557,7 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
     const e = this.store.engine;
     if (!e.active || ev.pointerId !== e.active.pid) return;
     if (ev.cancelable) ev.preventDefault();
-    const cell = this.evCell(ev);
+    const cell = this.evCell(ev, true);
     if (!cell) return;
     this.zone.runOutsideAngular(() => {
       e.pointerMove(cell[0], cell[1], ev.pointerId);

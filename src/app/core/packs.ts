@@ -17,6 +17,8 @@ export interface Pack {
   maskForLevel?(n: number): Mask;
   /** Interior wall cells for the level (rendering hint; masked boards only). */
   wallsForLevel?(n: number): Mask;
+  /** True when the level wraps around its edges (square boards only). */
+  warpForLevel?(n: number): boolean;
   seedForLevel(n: number): string;
 }
 
@@ -128,7 +130,7 @@ export const PACKS: Pack[] = [
     color: '#ea580c',
     kind: 'square',
     count: 60,
-    sizeForLevel: (n) => (n <= 12 ? 8 : 7),
+    sizeForLevel: (n) => (n <= 12 ? 8 : n <= 24 ? 6 : 7),
     shapeForLevel: (n) => (n <= 12 ? { rows: 5, cols: 8 } : n <= 24 ? { rows: 6, cols: 6 } : { rows: 7, cols: 7 }),
     maskForLevel: (n) =>
       n <= 12 ? polyStair
@@ -158,6 +160,17 @@ export const PACKS: Pack[] = [
     },
     seedForLevel: (n) => `flow-walls-${n}`,
   },
+  uniformPack({
+    id: 'warps',
+    name: 'Warps',
+    desc: 'Edges wrap around, 5x5 to 7x7',
+    color: '#7c3aed',
+    kind: 'square',
+    count: 60,
+    sizeForLevel: (n) => band(n, [[20, 5], [40, 6], [60, 7]]),
+    seedForLevel: (n) => `flow-warps-${n}`,
+    warpForLevel: () => true,
+  }),
 ];
 
 export function packById(id: string): Pack | undefined {

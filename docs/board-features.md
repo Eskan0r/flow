@@ -251,7 +251,13 @@ across topologies -> do last.
   an outside-of-shape hole. New 60-level **Walls** pack (6x6→8x8; centre
   block, pillars, bars, plus, staircase). Renderer fills wall cells solid.
   `npm test` + build green.
-- [ ] **4. Warps** — isolated to topology neighbor/distance/stepOptions + rendering.
+- [x] **4. Warps** — DONE (2026-10-12). `rectTopology(rows, cols, warp)` adds a
+  torus: `neighbors` wrap, `distance` is toroidal Manhattan, `stepOptions` is
+  distance-based (covers seams), `isBorder` is always false. Threaded through
+  `GenerateOptions.warp`/`FlowLevel.warp` (own seed namespace `…:warp`),
+  engine `loadLevel(..., warp)`, `Pack.warpForLevel` + new 60-level **Warps**
+  pack (5x5→7x7). Renderer unwraps flow polylines and tiles the flow layer 3x3
+  (clipped) so pipes/dots join across seams. `npm test` + build green.
 - [ ] **5. Continuous chain** — engine/UX-heavy, needs per-topology endpoint geometry.
 
 ## Review notes (independent pass)

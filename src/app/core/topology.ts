@@ -20,6 +20,8 @@ export interface Topology {
   mask?: Mask;
   /** Interior wall cells (blocked, subset of `!mask`); rendering hint only. */
   walls?: Mask;
+  /** Toroidal edges: stepping off one side re-enters the opposite (square only). */
+  warp?: boolean;
   key(r: number, c: number): number;
   inBounds(r: number, c: number): boolean;
   /** Orthogonal neighbors, in-bounds and in-shape only, deterministic order. */
@@ -90,10 +92,22 @@ export function maskTopology(rows: number, cols: number, mask: Mask, walls?: Mas
 }
 
 /** Rectangular square-grid topology (rows x cols). `squareTopology` is the
- *  square special case. Key stride is `cols`, matching hex storage. */
-export function rectTopology(rows: number, cols: number): Topology {
+ *  square special case. Key stride is `cols`, matching hex storage. When
+ *  `warp` is set the grid is a torus: edges wrap and distance is toroidal. */
+export function rectTopology(rows: number, cols: number, warp = false): Topology {
+  // A torus only makes sense from 3x3 up; smaller grids would produce
+  // duplicate/self neighbors, so they stay planar.
+  const tor = warp && rows > 2 && cols > 2;
   const inBounds = (r: number, c: number): boolean => r >= 0 && r < rows && c >= 0 && c < cols;
   const neighbors = (r: number, c: number): Cell[] => {
+    if (tor) {
+      return [
+        [(r - 1 + rows) % rows, c],
+        [(r + 1) % rows, c],
+        [r, (c - 1 + cols) % cols],
+        [r, (c + 1) % cols],
+      ];
+    }
     const out: Cell[] = [];
     if (r > 0) out.push([r - 1, c]);
     if (r < rows - 1) out.push([r + 1, c]);
@@ -101,31 +115,42 @@ export function rectTopology(rows: number, cols: number): Topology {
     if (c < cols - 1) out.push([r, c + 1]);
     return out;
   };
+  const torusDistance = ([r1, c1]: Cell, [r2, c2]: Cell): number => {
+    const dr = Math.abs(r1 - r2);
+    const dc = Math.abs(c1 - c2);
+    return Math.min(dr, rows - dr) + Math.min(dc, cols - dc);
+  };
   return {
     kind: 'square',
     rows,
     cols,
     total: rows * cols,
     cells: rows * cols,
+    warp: tor,
     key: (r, c) => r * cols + c,
     inBounds,
     neighbors,
-    distance: ([r1, c1], [r2, c2]) => Math.abs(r1 - r2) + Math.abs(c1 - c2),
-    isBorder: ([r, c]) => r === 0 || r === rows - 1 || c === 0 || c === cols - 1,
-    stepOptions: ([r, c], [tr, tc]) => {
-      const out: Cell[] = [];
-      const dr = tr - r;
-      const dc = tc - c;
-      const v: Cell | null = dr !== 0 ? [r + Math.sign(dr), c] : null;
-      const h: Cell | null = dc !== 0 ? [r, c + Math.sign(dc)] : null;
-      // Replicates the classic larger-delta-axis-first walk.
-      if (v && h) {
-        if (Math.abs(dr) >= Math.abs(dc)) out.push(v, h);
-        else out.push(h, v);
-      } else if (v) out.push(v);
-      else if (h) out.push(h);
-      return out.filter(([rr, cc]) => inBounds(rr, cc));
-    },
+    distance: tor ? torusDistance : ([r1, c1], [r2, c2]) => Math.abs(r1 - r2) + Math.abs(c1 - c2),
+    isBorder: tor ? () => false : ([r, c]) => r === 0 || r === rows - 1 || c === 0 || c === cols - 1,
+    stepOptions: tor
+      ? (from, to) => {
+        const d = torusDistance(from, to);
+        return neighbors(from[0], from[1]).filter((nb) => torusDistance(nb, to) < d);
+      }
+      : ([r, c], [tr, tc]) => {
+        const out: Cell[] = [];
+        const dr = tr - r;
+        const dc = tc - c;
+        const v: Cell | null = dr !== 0 ? [r + Math.sign(dr), c] : null;
+        const h: Cell | null = dc !== 0 ? [r, c + Math.sign(dc)] : null;
+        // Replicates the classic larger-delta-axis-first walk.
+        if (v && h) {
+          if (Math.abs(dr) >= Math.abs(dc)) out.push(v, h);
+          else out.push(h, v);
+        } else if (v) out.push(v);
+        else if (h) out.push(h);
+        return out.filter(([rr, cc]) => inBounds(rr, cc));
+      },
     collinear: (cells) => {
       if (cells.length === 0) return true;
       const r0 = cells[0][0];

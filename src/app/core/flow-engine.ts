@@ -3,7 +3,7 @@
  * (Angular component) owns rendering, persistence, sound, and timers. */
 
 import { defaultHexPairs, defaultPairsForSize, generateLevel, validateLevel } from './flow-generator';
-import type { Cell } from './flow-generator';
+import type { Cell, GeneratedLevel } from './flow-generator';
 import { hexTopology, maskTopology, rectTopology, squareTopology } from './topology';
 import type { BoardKind, Mask, Topology } from './topology';
 
@@ -75,6 +75,8 @@ export class FlowEngine {
   mask: Mask | undefined = undefined;
   /** Optional interior wall cells (rendering hint; subset of blocked cells). */
   walls: Mask | undefined = undefined;
+  /** Toroidal edges for square boards. */
+  warp = false;
   numPairs = 4;
   pairs: [Cell, Cell][] = [];
   solution: Cell[][] = [];
@@ -112,7 +114,7 @@ export class FlowEngine {
     return this.topo.inBounds(r, c);
   }
 
-  loadLevel(mode: PlayMode, levelNum = 1, seed = '', size = 7, kind: BoardKind = 'square', rows = 0, cols = 0, mask: Mask | null = null, walls: Mask | null = null): void {
+  loadLevel(mode: PlayMode, levelNum = 1, seed = '', size = 7, kind: BoardKind = 'square', rows = 0, cols = 0, mask: Mask | null = null, walls: Mask | null = null, warp = false): void {
     this.mode = mode;
     if (mode === 'level') {
       this.levelNum = levelNum;
@@ -128,11 +130,12 @@ export class FlowEngine {
     this.cols = cols > 0 ? cols : this.size;
     this.mask = kind === 'square' && mask ? mask : undefined;
     this.walls = kind === 'square' && this.mask && walls ? walls : undefined;
+    this.warp = kind === 'square' && !!warp && !mask && this.rows > 2 && this.cols > 2;
     this.topo = kind === 'hex'
       ? hexTopology(this.rows, this.cols)
       : this.mask
         ? maskTopology(this.rows, this.cols, this.mask, this.walls)
-        : rectTopology(this.rows, this.cols);
+        : rectTopology(this.rows, this.cols, this.warp);
     // Masked shapes pick their own density inside generateLevel (pass null).
     const genPairs = kind === 'hex'
       ? defaultHexPairs(this.rows, this.cols)
@@ -140,13 +143,21 @@ export class FlowEngine {
         ? null
         : defaultPairsForSize(Math.max(this.rows, this.cols));
     this.numPairs = genPairs ?? defaultPairsForSize(Math.max(this.rows, this.cols));
-    const opts = { kind, rows: this.rows, cols: this.cols, mask: this.mask, walls: this.walls };
+    const opts = { kind, rows: this.rows, cols: this.cols, mask: this.mask, walls: this.walls, warp: this.warp };
 
-    let lv = generateLevel(this.seed, Math.max(this.rows, this.cols), genPairs, opts);
-    for (let t = 1; t < 6 && !validateLevel(lv, this.topo).ok; t++) {
-      lv = generateLevel(`${this.seed}#${t}`, Math.max(this.rows, this.cols), genPairs, opts);
-      if (validateLevel(lv, this.topo).ok) this.seed = `${this.seed}#${t}`;
+    let lv: GeneratedLevel | null = null;
+    for (let t = 0; t < 6 && (!lv || !validateLevel(lv, this.topo).ok); t++) {
+      const salt = t === 0 ? this.seed : `${this.seed}#${t}`;
+      try {
+        const cand = generateLevel(salt, Math.max(this.rows, this.cols), genPairs, opts);
+        lv = cand;
+        if (t > 0 && validateLevel(cand, this.topo).ok) this.seed = salt;
+      } catch {
+        // Seed-specific carve failure: keep any previous candidate and try
+        // the next salt instead of letting the exception escape.
+      }
     }
+    if (!lv) throw new Error(`level generation failed for seed ${JSON.stringify(this.seed)}`);
     this.pairs = lv.pairs;
     this.solution = lv.solution;
     // Carved (hex) boards can land a different pair count than requested;
