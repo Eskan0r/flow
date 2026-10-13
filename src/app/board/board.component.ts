@@ -183,6 +183,7 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
     const drawFlows = (ctx: CanvasRenderingContext2D): void => {
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
+      this.paintChainTunnels(ctx, dotR);
       for (let i = 0; i < e.numPairs; i++) {
         const path = e.paths[i];
         if (path.length < 2) continue;
@@ -236,6 +237,48 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
       drawFlows(g);
     }
     if (e.chain) this.drawChainWalls(g);
+  }
+
+  /** Chain tunnels: color-to-color bridges between the canonical link dots
+   *  (exit of one flow blending into the entry of the next). One dot-radius
+   *  wide and twice the gap long (tucked under both dots), painted first so
+   *  pipes and dots sit on top of the joints. */
+  private paintChainTunnels(ctx: CanvasRenderingContext2D, dotR: number): void {
+    const e = this.store.engine;
+    if (e.topo.kind !== 'square' || e.chainLinks.length === 0) return;
+    ctx.save();
+    ctx.lineWidth = dotR;
+    ctx.lineCap = 'butt';
+    for (const [a, b, ca, cb] of e.chainLinks) {
+      const dr = b[0] - a[0];
+      const dc = b[1] - a[1];
+      if (Math.abs(dr) + Math.abs(dc) !== 1) continue; // wrapped link: enforced, not drawn
+      const [ax, ay] = this.center(a[0], a[1]);
+      const [bx, by] = this.center(b[0], b[1]);
+      const dx = bx - ax;
+      const dy = by - ay;
+      const len = Math.hypot(dx, dy) || 1;
+      const ux = dx / len;
+      const uy = dy / len;
+      // Gradient spans rim to rim; the stroke runs double the gap so its
+      // ends hide under the dots (gradient end colors clamp beyond stops).
+      const fx = ax + ux * dotR;
+      const fy = ay + uy * dotR;
+      const tx = bx - ux * dotR;
+      const ty = by - uy * dotR;
+      const mx = (ax + bx) / 2;
+      const my = (ay + by) / 2;
+      const half = Math.hypot(tx - fx, ty - fy);
+      const grad = ctx.createLinearGradient(fx, fy, tx, ty);
+      grad.addColorStop(0, PALETTE[ca % PALETTE.length]);
+      grad.addColorStop(1, PALETTE[cb % PALETTE.length]);
+      ctx.strokeStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(mx - ux * half, my - uy * half);
+      ctx.lineTo(mx + ux * half, my + uy * half);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   /** Chain territory wash: each owned cell tinted its flow's color under the

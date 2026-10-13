@@ -24,6 +24,10 @@ export interface ActiveStroke {
   /** Chain session marker: color pre-claimed by a handoff, so the run's
    *  banked move covers it (burns free on first change, then clears). */
   preClaim: number | null;
+  /** Handoff trail for backward un-handoff: each entry records the flow we
+   *  left and the dot we left it from, so retreating across the seam pops
+   *  back to fix earlier flows without releasing. */
+  trail: Array<{ color: number; dot: Cell }>;
 }
 
 export interface EngineSnapshot {
@@ -87,6 +91,10 @@ export class FlowEngine {
    *  incident edges except the solution one). Static per level; paths and
    *  snapshots never include them. Empty on non-chain boards. */
   chainWalls: Array<readonly [Cell, Cell]> = [];
+  /** Canonical chain links for the renderer: [exitDot, entryDot, exitColor,
+   *  entryColor] of each consecutive flow pair in chain order. Empty on
+   *  non-chain boards. */
+  chainLinks: Array<readonly [Cell, Cell, number, number]> = [];
   numPairs = 4;
   pairs: [Cell, Cell][] = [];
   solution: Cell[][] = [];
@@ -192,6 +200,7 @@ export class FlowEngine {
     // Blocked edges only ever touch the funneled dots, which no solution
     // but the chain's own uses — solvability is preserved by construction.
     this.chainWalls = [];
+    this.chainLinks = [];
     if (this.chain) {
       const ch = flowChainPath(this.pairs, this.topo);
       if (ch && ch.order.length > 0) {
@@ -199,6 +208,9 @@ export class FlowEngine {
         this.addFunnel(this.solution[first], ch.entries[0][0]);
         const last = ch.order[ch.order.length - 1];
         this.addFunnel(this.solution[last], ch.entries[ch.entries.length - 1][1]);
+        for (let k = 1; k < ch.entries.length; k++) {
+          this.chainLinks.push([ch.entries[k - 1][1], ch.entries[k][0], ch.order[k - 1], ch.order[k]]);
+        }
       }
     }
 
@@ -308,7 +320,7 @@ export class FlowEngine {
     this.pushHistory();
     const prevLen = this.paths[color].length;
     this.paths[color] = [from.slice() as Cell];
-    this.active = { color, last: from.slice() as Cell, breaks: [], changed: false, pid, preClaim: null };
+    this.active = { color, last: from.slice() as Cell, breaks: [], changed: false, pid, preClaim: null, trail: [] };
     // Clearing an existing pipe is itself a board change: attribute it now.
     // A bare-dot tap changes nothing and stays free.
     if (prevLen >= 2) this.markChanged(color);
@@ -317,7 +329,7 @@ export class FlowEngine {
 
   /** Continue an existing pipe from the middle (already trimmed by caller). */
   grabStroke(color: number, from: Cell, pid: number): void {
-    this.active = { color, last: from.slice() as Cell, breaks: [], changed: false, pid, preClaim: null };
+    this.active = { color, last: from.slice() as Cell, breaks: [], changed: false, pid, preClaim: null, trail: [] };
   }
 
   /* Moves are session-collapsed: consecutive strokes on the same color cost
@@ -492,6 +504,16 @@ export class FlowEngine {
 
     const epc = this.epOf.get(this.key(r, c));
     if (epc !== undefined && epc !== color) {
+      // Backward un-handoff: retreated to the entry dot and stepping back
+      // into the flow we came from pops the trail and resumes it.
+      const top = this.active.trail[this.active.trail.length - 1];
+      if (
+        top && epc === top.color && r === top.dot[0] && c === top.dot[1] &&
+        path.length <= 1
+      ) {
+        this.unhandoff();
+        return true;
+      }
       // Chain handoff: the completed flow's head stepped into an adjacent
       // incomplete flow's dot, so the same stroke continues in the new color
       // (same pid, history entry, and move).
@@ -531,11 +553,36 @@ export class FlowEngine {
 
   /** Chain handoff: seed the next flow at its dot and keep the stroke alive
    *  under the same pid. No history push (the whole chain undoes as one
-   *  action); the run's move stays banked via a pre-claim on the new color. */
+   *  action); the run's move stays banked via a pre-claim on the new color.
+   *  The flow we leave is pushed on the trail for backward un-handoff. */
   private handoff(color: number, dot: Cell): void {
-    const pid = this.active ? this.active.pid : 0;
+    const a = this.active;
+    const pid = a ? a.pid : 0;
+    const trail = a ? a.trail : [];
+    if (a) trail.push({ color: a.color, dot: a.last.slice() as Cell });
     this.paths[color] = [dot.slice() as Cell];
-    this.active = { color, last: dot.slice() as Cell, breaks: [], changed: true, pid, preClaim: color };
+    this.active = { color, last: dot.slice() as Cell, breaks: [], changed: true, pid, preClaim: color, trail };
+    this.rebuild();
+  }
+
+  /** Backward un-handoff: the head retreated to its entry dot and stepped
+   *  back into the flow it came from. Pop the trail, clear the stub, and
+   *  resume the previous flow (re-claimed for the session) so earlier
+   *  flows can be re-routed without releasing. */
+  private unhandoff(): void {
+    const a = this.active;
+    if (!a || a.trail.length === 0) return;
+    const top = a.trail.pop() as { color: number; dot: Cell };
+    this.paths[a.color] = [];
+    this.active = {
+      color: top.color,
+      last: top.dot.slice() as Cell,
+      breaks: [],
+      changed: true,
+      pid: a.pid,
+      preClaim: top.color,
+      trail: a.trail,
+    };
     this.rebuild();
   }
 
@@ -547,6 +594,9 @@ export class FlowEngine {
     this.rebuild();
     this.won = false;
     this.win = null;
+    // A restored board may not match a live stroke's handoff trail; drop it
+    // so stale entries can never un-handoff across the restored state.
+    if (this.active) this.active.trail = [];
     return true;
   }
 

@@ -294,4 +294,29 @@ describe('App', () => {
     expect(e.done[ch!.order[1]]).toBe(true);
     expect(e.moves).toBe(1);
   });
+
+  it('prev/next level buttons step pack levels from the game view', async () => {
+    const { fixture, store } = await boot();
+    const pack = PACKS.find((p) => p.id === 'regular')!;
+    store.playPackLevel(pack, 3);
+    expect(store.view()).toBe('game');
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const next = document.querySelector('[data-testid=next-level-btn]') as HTMLButtonElement;
+    const prev = document.querySelector('[data-testid=prev-level-btn]') as HTMLButtonElement;
+    expect(next).toBeTruthy();
+    expect(prev).toBeTruthy();
+    next.click();
+    expect(store.packLevel()).toBe(4);
+    expect(store.view()).toBe('game');
+    prev.click();
+    prev.click();
+    expect(store.packLevel()).toBe(2);
+    // custom seeds have no level order: steppers stay hidden
+    store.newRandom();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(document.querySelector('[data-testid=next-level-btn]')).toBeNull();
+    expect(document.querySelector('[data-testid=prev-level-btn]')).toBeNull();
+  });
 });

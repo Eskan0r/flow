@@ -181,6 +181,23 @@
             <ng-icon name="lucideDices" />
             New
           </button>
+          @if (store.pack() || store.isDaily()) {
+            <button
+              hlmBtn
+              variant="outline"
+              data-testid="prev-level-btn"
+              class="md:justify-start"
+              aria-label="Previous level"
+              (click)="stepLevel(-1)"
+            >
+              <ng-icon name="lucideChevronLeft" />
+              Prev
+            </button>
+            <button hlmBtn variant="outline" data-testid="next-level-btn" class="md:justify-start" aria-label="Next level" (click)="stepLevel(1)">
+              <ng-icon name="lucideChevronRight" />
+              Next
+            </button>
+          }
         </div>
         @if (store.panelOpen()) {
           <div hlmSeparator class="my-1 hidden md:block"></div>
@@ -240,12 +257,6 @@
               </div>
             </div>
             <div class="flex flex-wrap items-center gap-1.5">
-              <button hlmBtn variant="outline" size="icon-sm" aria-label="Previous level" (click)="stepLevel(-1)">
-                <ng-icon name="lucideChevronLeft" />
-              </button>
-              <button hlmBtn variant="outline" size="icon-sm" aria-label="Next level" (click)="stepLevel(1)">
-                <ng-icon name="lucideChevronRight" />
-              </button>
               <button hlmBtn variant="outline" size="sm" data-testid="random-btn" (click)="store.newRandom()">
                 <ng-icon name="lucideDices" />
                 Random

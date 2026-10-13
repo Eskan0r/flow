@@ -278,6 +278,12 @@ across topologies -> do last.
 
 - Confirmed: topology seam, polyomino-as-mask, chain-as-adjacency, snake
   adjacency-free-property.
+- Level stability (2026-10-13): generation is fully deterministic — no
+  wall-clock reads in the gen path (fixed iteration/restart counts replace
+  time budgets; sort comparators draw jitter up front so rng call counts
+  don't vary by JS engine). One seed deals the same level on every client;
+  verified byte-identical across processes. No backend or baked level files
+  needed (dailies are unbounded future dates, so they must generate live).
 - Add: #5 move-count/session semantics + undo; dense grid + `playable()`
   (don't compact keys); `rect` alongside `squareTopology`; persistence
   schema versioning; new tests per feature; renderer boundary/warp handling;

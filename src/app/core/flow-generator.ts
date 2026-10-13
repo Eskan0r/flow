@@ -344,7 +344,12 @@ export function findCleanPartition(
       opts[j] = t;
     }
     const avg = total / K;
-    opts.sort((x, y) => Math.abs(x - avg) - Math.abs(y - avg) + (rng() - 0.5) * 0.01);
+    // Jitter keys are drawn up front: rng call counts inside a sort
+    // comparator vary by JS engine, which would diverge levels across
+    // browsers. Score-form keeps the comparator transitive and pure.
+    const jitter = new Map<number, number>();
+    for (const L of opts) jitter.set(L, (rng() - 0.5) * 0.01);
+    opts.sort((x, y) => Math.abs(x - avg) + (jitter.get(x) ?? 0) - Math.abs(y - avg) - (jitter.get(y) ?? 0));
     for (const L of opts) {
       if (!segClean(path, topo, pos, pos + L, minD)) continue;
       const straight = topo.collinear(path.slice(pos, pos + L));
@@ -359,7 +364,7 @@ export function findCleanPartition(
 }
 
 export interface GenerateOptions {
-  timeBudgetMs?: number;
+  /** Fixed candidate count for the cut pipeline (deterministic bound). */
   maxPaths?: number;
   kind?: BoardKind;
   rows?: number;
@@ -421,8 +426,11 @@ export function generateLevel(
       ? maskTopology(rows, cols, opts.mask as Mask, opts.walls)
       : rectTopology(rows, cols, opts.warp);
   const total = topo.total;
-  const timeBudgetMs = opts.timeBudgetMs ?? 1400;
   const maxPaths = opts.maxPaths ?? 70;
+  // Excellent boards stop the search early, but only after a fixed minimum
+  // look (never wall-clock: iteration counts must be identical everywhere so
+  // one seed deals the same level on every client).
+  const MIN_PATHS = 8;
 
   // Hex and masked boards carve instead of cutting: Hamiltonian partitions
   // tangle on degree-6 grids and non-rectangular shapes, while sequential
@@ -456,18 +464,18 @@ export function generateLevel(
   });
   let maskBestEffort: ReturnType<typeof mkLevel> | null = null;
   if (kind === 'hex' || masked) {
-    const salts: Array<{ salt: string; relax: boolean; budget: number }> = [
-      { salt: '', relax: false, budget: timeBudgetMs },
-      { salt: '#c2', relax: false, budget: 900 },
-      { salt: '#c3', relax: false, budget: 900 },
-      { salt: '#c4', relax: false, budget: 700 },
-      { salt: '#c5', relax: false, budget: 700 },
-      { salt: '#c6', relax: true, budget: 700 },
+    const salts: Array<{ salt: string; relax: boolean; restarts: number }> = [
+      { salt: '', relax: false, restarts: 12 },
+      { salt: '#c2', relax: false, restarts: 12 },
+      { salt: '#c3', relax: false, restarts: 12 },
+      { salt: '#c4', relax: false, restarts: 12 },
+      { salt: '#c5', relax: false, restarts: 12 },
+      { salt: '#c6', relax: true, restarts: 12 },
     ];
     // Thin/non-convex masks need a deeper carve search than hex.
     for (const a of salts) {
       const carved = carveLevel(String(seedString), topo, K, {
-        timeBudgetMs: a.budget,
+        maxRestarts: a.restarts,
         salt: a.salt,
         relaxShape: a.relax,
         ...tuning,
@@ -498,7 +506,7 @@ export function generateLevel(
     // that are genuinely uncarvable (loadLevel retries with fresh seeds).
     const alt = [K - 1, K + 1, K - 2, K + 2, K - 3, K + 3].filter((k) => k >= 3 && k <= 14);
     for (const k of alt) {
-      const carved = carveLevel(String(seedString), topo, k, { timeBudgetMs: 1200, relaxShape: true, ...tuning });
+      const carved = carveLevel(String(seedString), topo, k, { maxRestarts: 10, relaxShape: true, ...tuning });
       if (!carved) continue;
       const info = analyzeCut(
         carved.solution.flat(),
@@ -514,7 +522,7 @@ export function generateLevel(
     // One deep, slow attempt before giving up: thin shapes sometimes need a
     // wider search and more tries per flow than the salts above use.
     const deep = carveLevel(String(seedString), topo, K, {
-      timeBudgetMs: 2500,
+      maxRestarts: 12,
       relaxShape: true,
       triesPerFlow: 60,
       pathBudget: 20000,
@@ -528,8 +536,8 @@ export function generateLevel(
 
   const { minLen, maxLen } = lengthBounds(Math.max(rows, cols), K, total);
 
-  let bestClean: Candidate | null = null;
-  let bestRelaxed: Candidate | null = null;
+  const cleanPool: Candidate[] = [];
+  const relaxedPool: Candidate[] = [];
   let bestDirty: Candidate | null = null;
   let bestDirtyScore = -Infinity;
   const considerDirty = (lens: number[], info: CutInfo, path: Cell[]): void => {
@@ -543,8 +551,9 @@ export function generateLevel(
   // Phase A: smooth Hamiltonians + shape-pruned sequential cuts. Accepted
   // candidates are touch-free, mono-free, have at most one straight line
   // and zero border-to-border straights.
+  let bestCleanScore = -Infinity;
+  let bestCleanMinD = 0;
   for (let p = 0; p < maxPaths; p++) {
-    if (Date.now() - t0 > timeBudgetMs && bestClean) break;
     const path = buildSnake(rows, cols);
     backbite(path, topo, rng, Math.floor(total * (0.3 + rng() * 0.6)));
     const lens = findCleanPartition(path, topo, K, minLen, maxLen, 2, rng, 8000, 1, true);
@@ -554,17 +563,18 @@ export function generateLevel(
     if (info.touches !== 0 || info.mono2x2 !== 0 || info.adjacentSame !== 0) continue;
     if (info.straights > 1 || info.borderStraight > 0) continue;
     info.score = scoreClean(info);
-    if (!bestClean || info.score > bestClean.info.score) {
-      bestClean = { lens: lens.slice(), info, path: copyPath(path) };
+    cleanPool.push({ lens: lens.slice(), info, path: copyPath(path) });
+    if (info.score > bestCleanScore) {
+      bestCleanScore = info.score;
+      bestCleanMinD = info.minD;
     }
-    if (bestClean && bestClean.info.score > 1.35 && bestClean.info.minD >= 3) {
-      if (Date.now() - t0 > 120) break;
-    }
+    if (bestCleanScore > 1.35 && bestCleanMinD >= 3 && p >= MIN_PATHS) break;
   }
 
   // Phase B: medium-roughness Hamiltonians, touch-free sequential cuts, no
   // shape pruning. Still solvable with clean essentials.
-  if (!bestClean && Date.now() - t0 < timeBudgetMs + 400) {
+  if (cleanPool.length === 0) {
+    let bestRelaxedScore = -Infinity;
     for (let p = 0; p < 40; p++) {
       const path = buildSnake(rows, cols);
       backbite(path, topo, rng, Math.floor(total * (1.0 + rng() * 1.0)));
@@ -574,18 +584,30 @@ export function generateLevel(
       considerDirty(lens, info, path);
       if (info.touches !== 0 || info.mono2x2 !== 0 || info.adjacentSame !== 0) continue;
       info.score = scoreClean(info);
-      if (!bestRelaxed || info.score > bestRelaxed.info.score) {
-        bestRelaxed = { lens: lens.slice(), info, path: copyPath(path) };
-      }
-      if (bestRelaxed && bestRelaxed.info.score > 1.2 && Date.now() - t0 > timeBudgetMs) break;
+      relaxedPool.push({ lens: lens.slice(), info, path: copyPath(path) });
+      if (info.score > bestRelaxedScore) bestRelaxedScore = info.score;
+      if (bestRelaxedScore > 1.2 && p >= MIN_PATHS) break;
     }
   }
 
+  // Diversity pick: best-by-score funnels different seeds into the same few
+  // optima (repeat levels across a pack), so choose by seed among the top
+  // scorers instead. The strict filter keeps the suite invariants green by
+  // construction; the rng draw sits at a fixed program point, so one seed
+  // still deals one level on every client.
+  const pool = cleanPool.length > 0 ? cleanPool : relaxedPool;
+  const strict = pool.filter((c) =>
+    c.info.minRatio >= 0.25 && c.info.minD >= 2 &&
+    c.info.straights <= 1 && c.info.borderStraight === 0);
+  const top = (strict.length > 0 ? strict : pool)
+    .slice()
+    .sort((x, y) => y.info.score - x.info.score)
+    .slice(0, 8);
+  const best = top.length > 0 ? top[Math.floor(rng() * top.length)] : bestDirty;
   // Phase C: best-effort fallback. Always yields a solvable board (the cut
   // itself is a full-coverage solution); only the shape polish may be missing.
-  const best = bestClean ?? bestRelaxed ?? bestDirty;
   if (best) {
-    const tier = bestClean ? 'clean' : bestRelaxed ? 'relaxed' : 'dirty';
+    const tier = cleanPool.includes(best) ? 'clean' : relaxedPool.includes(best) ? 'relaxed' : 'dirty';
     const { info, path } = best;
     const segs: Cell[][] = [];
     let idx = 0;
@@ -622,7 +644,7 @@ export function generateLevel(
   // instead; if that fails too, throw so FlowEngine retries another salt.
   if (topo.warp) {
     const carved = carveLevel(String(seedString), topo, K, {
-      timeBudgetMs: 2500,
+      maxRestarts: 12,
       relaxShape: true,
       triesPerFlow: 60,
       pathBudget: 20000,

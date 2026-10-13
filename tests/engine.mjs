@@ -59,7 +59,7 @@ section('cutting another pipe, then undo restores it');
   e.rebuild();
   e.drainEvents();
   e.pushHistory(); // as pointerDown would
-  e.active = { color: 1, last: [1, 2], breaks: [], changed: true, pid: 5 };
+  e.active = { color: 1, last: [1, 2], breaks: [], changed: true, pid: 5, trail: [] };
   ok(e.applyStep(1, [2, 2]), 'stepping onto a rival pipe cuts it');
   ok(e.paths[0].length === 1, `victim truncated (3 -> ${e.paths[0].length})`);
   ok(e.drainEvents().includes('cut'), 'cut event emitted');
@@ -79,7 +79,7 @@ section('in-stroke un-cut restores immediately');
   e.paths[1] = [[0, 2], [1, 2]];
   e.rebuild();
   e.drainEvents();
-  e.active = { color: 1, last: [1, 2], breaks: [], changed: true, pid: 7 };
+  e.active = { color: 1, last: [1, 2], breaks: [], changed: true, pid: 7, trail: [] };
   e.applyStep(1, [2, 2]);
   ok(e.paths[0].length === 1, 'cut happened mid-stroke');
   // step back onto own pipe -> trims cutter, restores the break
@@ -132,7 +132,7 @@ section('fast drags prefer not cutting rival pipes');
   e.rebuild();
   e.drainEvents();
   e.pushHistory();
-  e.active = { color: 1, last: [1, 1], breaks: [], changed: true, pid: 5 };
+  e.active = { color: 1, last: [1, 1], breaks: [], changed: true, pid: 5, trail: [] };
   // diagonal swipe toward [3,3]: greedy routing would step on [2,1] (cut),
   // but [1,2] is free and must be preferred
   e.pointerMove(3, 3, 5);
@@ -435,6 +435,15 @@ section('chain funnels wall the run start except the solution edge');
   ok(e.chainWalls.length > 0, `funnel walls built (${e.chainWalls.length})`);
   const ch = flowChainPath(e.pairs, e.topo);
   const first = ch.order[0];
+  // renderer tunnel data: one link per consecutive pair, each end a real
+  // dot of its stated color, orthogonally adjacent across the seam
+  ok(e.chainLinks.length === e.numPairs - 1, `links join every hop (${e.chainLinks.length})`);
+  let linksOk = true;
+  for (const [a, b, ca, cb] of e.chainLinks) {
+    if (e.epOf.get(e.key(a[0], a[1])) !== ca || e.epOf.get(e.key(b[0], b[1])) !== cb) linksOk = false;
+    if (Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) !== 1) linksOk = false;
+  }
+  ok(linksOk, 'tunnel links reference adjacent dots of their colors');
   const S = ch.entries[0][0];
   const sol = e.solution[first];
   const open = (S[0] === sol[0][0] && S[1] === sol[0][1]) ? sol[1] : sol[sol.length - 2];
@@ -461,6 +470,46 @@ section('chain perfect demands the single move');
   ok(e.won, 'flow-by-flow still wins');
   ok(e.moves === e.numPairs, `one move per flow (got ${e.moves})`);
   ok(e.win && e.win.stars === 1, 'multi-move chain solve is not perfect');
+}
+
+section('chain backward un-handoff retreats across the seam to fix flows');
+{
+  const e = chainScene(true);
+  // chain A -> B in one stroke
+  e.pointerDown(0, 0, 1);
+  e.pointerMove(0, 1, 1);
+  e.pointerMove(0, 2, 1);
+  ok(e.active !== null && e.active.color === 1, 'handed off to B');
+  e.pointerMove(0, 3, 1);
+  ok(e.done[0] && e.done[1], 'both connected');
+  ok(e.moves === 1, 'chain is one move');
+  // drag back through B to its entry dot: still B, trimmed
+  e.pointerMove(0, 2, 1);
+  ok(e.active !== null && e.active.color === 1 && e.paths[1].length === 1, 'retreated to B entry, still on B');
+  // step back into A's dot: pop the trail, resume A, clear the stub
+  e.pointerMove(0, 1, 1);
+  ok(e.active !== null && e.active.color === 0, 'un-handoff resumed A');
+  ok(e.paths[1].length === 0, 'B stub cleared');
+  ok(e.done[0], 'A still complete underneath');
+  ok(e.moves === 1, 'retreat adds no move');
+  // forward again without releasing: re-handoff works after an un-handoff
+  e.pointerMove(0, 2, 1);
+  ok(e.active !== null && e.active.color === 1, 're-handoff into B');
+  e.pointerMove(0, 3, 1);
+  e.pointerUp(1);
+  ok(e.done[1] && e.moves === 1, 're-chained, still one move');
+  e.undo();
+  ok(e.paths[0].length === 0 && e.paths[1].length === 0, 'one undo clears everything');
+}
+
+section('engine loads are deterministic per seed');
+{
+  const a = new FlowEngine();
+  a.loadLevel('seed', 0, 'determ-engine', 7);
+  const b = new FlowEngine();
+  b.loadLevel('seed', 0, 'determ-engine', 7);
+  ok(JSON.stringify(a.pairs) === JSON.stringify(b.pairs), 'same seed loads identical pairs');
+  ok(JSON.stringify(a.solution) === JSON.stringify(b.solution), 'same seed loads identical solution');
 }
 
 console.log(`\n----------------------------------------\nENGINE: PASS ${pass} · FAIL ${fail}`);

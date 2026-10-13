@@ -504,8 +504,9 @@ export class FlowStore {
   refresh(): void {
     for (const ev of this.engine.drainEvents()) {
       if (ev === 'cut') this.sound.cut();
-      else if (ev === 'blocked') this.sound.bad();
       else if (ev.startsWith('complete:')) this.sound.done();
+      // NOTE: 'blocked' bumps stay silent by design (a burst of them fires
+      // on release after dragging along walls/rival dots).
     }
     const e = this.engine;
     this.moves.set(e.moves);

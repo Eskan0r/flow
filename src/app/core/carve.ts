@@ -182,7 +182,8 @@ function carveOnce(st: CarveState): Cell[][] | null {
 }
 
 export interface CarveOptions {
-  timeBudgetMs?: number;
+  /** Fixed restart count (deterministic work bound; replaces wall-clock). */
+  maxRestarts?: number;
   triesPerFlow?: number;
   pathBudget?: number;
   /** Accepted pair-count window is [numPairs-kSlack, numPairs+kSlack]. */
@@ -210,18 +211,16 @@ export function carveLevel(
   const kMax = numPairs + (opts.kSlack ?? 2);
   const triesPerFlow = opts.triesPerFlow ?? TRIES_PER_FLOW;
   const pathBudget = opts.pathBudget ?? PATH_BUDGET;
-  const t0 = Date.now();
-  const timeBudget = opts.timeBudgetMs ?? 1200;
+  const maxRestarts = opts.maxRestarts ?? 12;
   const maxAttempts = opts.maxAttempts ?? 20000;
   const attempts = { count: 0, max: maxAttempts };
 
   let best: Cell[][] | null = null;
   let bestScore = -Infinity;
   let successes = 0;
-  // Fixed restart count + score exits keep output deterministic; the time
-  // budget is only a pathological safety net (it essentially never binds).
-  for (let rs = 0; rs < 12; rs++) {
-    if (Date.now() - t0 > timeBudget) break;
+  // Fixed restart count + score exits + the shared attempts cap keep output
+  // identical for a seed on every client (no wall-clock reads anywhere).
+  for (let rs = 0; rs < maxRestarts; rs++) {
     const grid = new Array<number>(total).fill(-1);
     if (topo.mask) {
       for (let r = 0; r < topo.rows; r++) {
