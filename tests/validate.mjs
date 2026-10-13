@@ -4,7 +4,8 @@
  * endpoints never adjacent, no self-touch, no 2x2 mono, determinism,
  * seed sensitivity, contention, performance, edge-case seeds.
  */
-import { generateLevel, validateLevel, defaultPairsForSize } from '../src/app/core/flow-generator.ts';
+import { generateLevel, validateLevel, defaultPairsForSize, flowChainPath } from '../src/app/core/flow-generator.ts';
+import { rectTopology } from '../src/app/core/topology.ts';
 
 let pass = 0, fail = 0;
 const failures = [];
@@ -162,6 +163,48 @@ function countPlayable(mask, rows, cols) {
   let n = 0;
   for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) if (mask(r, c)) n++;
   return n;
+}
+
+section('flow chain paths (one-stroke orders)');
+{
+  // square snake-partition levels chain by construction: consecutive runs
+  // share their cut point, so partition order is always a valid chain
+  let unchained = 0;
+  for (const size of [5, 6, 7, 8]) {
+    const topo = rectTopology(size, size, false);
+    for (const seed of ['chain-a', 'chain-b', 'chain-c']) {
+      const lv = generateLevel(seed, size, null, { kind: 'square', rows: size, cols: size });
+      const ch = flowChainPath(lv.pairs, topo);
+      if (!ch || ch.order.length !== lv.numPairs || new Set(ch.order).size !== lv.numPairs) {
+        unchained++;
+        console.error(`  FAIL: ${size}x${size} ${seed}: no full chain`);
+        continue;
+      }
+      ok(true, `${size}x${size} ${seed}: Hamiltonian chain over ${lv.numPairs} flows`);
+      // entries continuity: exit[i] touches entry[i+1], and every entry is
+      // one of its own flow's dots with the exit at the other dot
+      let hopsOk = ch.entries.length === lv.numPairs;
+      for (let k = 0; k < ch.entries.length; k++) {
+        const [en, ex] = ch.entries[k];
+        const dots = lv.pairs[ch.order[k]];
+        const has = (d) => (d[0] === dots[0][0] && d[1] === dots[0][1]) || (d[0] === dots[1][0] && d[1] === dots[1][1]);
+        if (!has(en) || !has(ex)) { hopsOk = false; break; }
+        if ((en[0] === ex[0] && en[1] === ex[1])) { hopsOk = false; break; }
+        if (k > 0) {
+          const prevEx = ch.entries[k - 1][1];
+          if (!topo.neighbors(prevEx[0], prevEx[1]).some(([r, c]) => r === en[0] && c === en[1])) { hopsOk = false; break; }
+        }
+      }
+      ok(hopsOk, `${size}x${size} ${seed}: every chain hop touches endpoints`);
+    }
+  }
+  ok(unchained === 0, 'all sampled square levels chainable');
+  // negative: isolated flows admit no chain
+  const lonely = [[[0, 0], [4, 4]], [[0, 4], [4, 0]]];
+  ok(flowChainPath(lonely, rectTopology(5, 5, false)) === null, 'disconnected endpoints yield no chain');
+  // degenerate: a lone flow is trivially chained
+  const solo = flowChainPath([[[0, 0], [2, 2]]], rectTopology(5, 5, false));
+  ok(!!solo && solo.order.length === 1 && solo.entries.length === 1, 'single flow chains trivially');
 }
 
 console.log(`\n----------------------------------------\nGENERATOR: PASS ${pass} · FAIL ${fail}`);

@@ -182,7 +182,8 @@ export class FlowStore {
     const mask = p.maskForLevel ? p.maskForLevel(level) : null;
     const walls = p.wallsForLevel ? p.wallsForLevel(level) : null;
     const warp = p.warpForLevel ? p.warpForLevel(level) : false;
-    this.engine.loadLevel('seed', 0, p.seedForLevel(level), p.sizeForLevel(level), p.kind, rows, cols, mask, walls, warp);
+    const chain = p.chainForLevel ? p.chainForLevel(level) : false;
+    this.engine.loadLevel('seed', 0, p.seedForLevel(level), p.sizeForLevel(level), p.kind, rows, cols, mask, walls, warp, chain);
     this.view.set('game');
     this.afterLoad();
     if (announce) this.sound.click();
@@ -514,9 +515,10 @@ export class FlowStore {
     const p = this.pack();
     const dims = `${e.rows} \u00D7 ${e.cols}`;
     const tag = e.topo.warp ? ' warp' : e.topo.kind === 'hex' ? ' hex' : '';
+    const chainTag = e.chain ? ' chain' : '';
     if (p) {
       this.title.set(`${p.name} \u00B7 ${this.packLevel()}`);
-      this.subtitle.set(`${dims}${tag} \u00B7 ${e.numPairs} colors`);
+      this.subtitle.set(`${dims}${tag}${chainTag} \u00B7 ${e.numPairs} colors`);
     } else if (e.seed.startsWith('daily-')) {
       this.title.set('Daily Puzzle');
       const hex = e.topo.kind === 'hex' ? ' Hex' : '';

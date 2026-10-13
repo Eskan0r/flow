@@ -19,6 +19,8 @@ export interface Pack {
   wallsForLevel?(n: number): Mask;
   /** True when the level wraps around its edges (square boards only). */
   warpForLevel?(n: number): boolean;
+  /** True when completing a flow hands the live stroke to a touching dot. */
+  chainForLevel?(n: number): boolean;
   seedForLevel(n: number): string;
 }
 
@@ -170,6 +172,17 @@ export const PACKS: Pack[] = [
     sizeForLevel: (n) => band(n, [[20, 5], [40, 6], [60, 7]]),
     seedForLevel: (n) => `flow-warps-${n}`,
     warpForLevel: () => true,
+  }),
+  uniformPack({
+    id: 'chains',
+    name: 'Chains',
+    desc: 'One-stroke boards: drag across touching dots, 5x5 to 7x7',
+    color: '#e11d48',
+    kind: 'square',
+    count: 60,
+    sizeForLevel: (n) => band(n, [[20, 5], [40, 6], [60, 7]]),
+    seedForLevel: (n) => `flow-chains-${n}`,
+    chainForLevel: () => true,
   }),
 ];
 

@@ -5,6 +5,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { describe, expect, it, vi } from 'vitest';
 import { App } from './app';
 import type { FlowStore } from './core/flow-store';
+import { flowChainPath } from './core/flow-generator';
 import { PACKS } from './core/packs';
 
 function cellXY(r: number, c: number, size: number, side = 400): [number, number] {
@@ -252,5 +253,45 @@ describe('App', () => {
     // Full CD sweep across overlay views too: the win dialog's stable
     // aria wiring must not trip dev-mode NG0100 (check-no-changes).
     expect(() => TestBed.inject(ApplicationRef).tick()).not.toThrow();
+  });
+
+  it('chains two touching flows in one stroke on chain boards', async () => {
+    const { fixture, store } = await boot();
+    const chains = PACKS.find((p) => p.id === 'chains');
+    expect(chains).toBeTruthy();
+    store.playPackLevel(chains!, 1);
+    expect(store.view()).toBe('game');
+    const e = store.engine;
+    expect(e.chain).toBe(true);
+    expect(store.subtitle()).toContain('chain');
+    fixture.detectChanges();
+
+    const ch = flowChainPath(e.pairs, e.topo);
+    expect(ch).not.toBeNull();
+    expect(ch!.order.length).toBe(e.numPairs);
+    const canvas = boardCanvas();
+    const size = e.size;
+    // draw the first two chain flows as one unbroken drag through real events
+    const sg0 = e.solution[ch!.order[0]];
+    const sg1 = e.solution[ch!.order[1]];
+    const [en0] = ch!.entries[0];
+    const [en1] = ch!.entries[1];
+    const cells0 = (en0[0] === sg0[0][0] && en0[1] === sg0[0][1]) ? sg0 : sg0.slice().reverse();
+    const cells1 = (en1[0] === sg1[0][0] && en1[1] === sg1[0][1]) ? sg1 : sg1.slice().reverse();
+    const [x0, y0] = cellXY(cells0[0][0], cells0[0][1], size);
+    pointer(canvas, 'pointerdown', x0, y0);
+    for (let i = 1; i < cells0.length; i++) {
+      const [x, y] = cellXY(cells0[i][0], cells0[i][1], size);
+      pointer(canvas, 'pointermove', x, y);
+    }
+    expect(e.done[ch!.order[0]]).toBe(true);
+    for (const [r, c] of cells1) {
+      const [x, y] = cellXY(r, c, size);
+      pointer(canvas, 'pointermove', x, y);
+    }
+    const [xe, ye] = cellXY(cells1[cells1.length - 1][0], cells1[cells1.length - 1][1], size);
+    pointer(canvas, 'pointerup', xe, ye);
+    expect(e.done[ch!.order[1]]).toBe(true);
+    expect(e.moves).toBe(1);
   });
 });

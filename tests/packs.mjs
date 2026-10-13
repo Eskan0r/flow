@@ -2,7 +2,8 @@
  * Run: node --experimental-strip-types --no-warnings --import ./tests/hooks.mjs tests/packs.mjs
  */
 import { PACKS, DAILY_COUNT, DAILY_KINDS, DAILY_SIZES, FLOW_SITE, dailyLabel, dailySeed, dailyShareCard, parseDailySeed } from '../src/app/core/packs.ts';
-import { generateLevel, validateLevel } from '../src/app/core/flow-generator.ts';
+import { generateLevel, validateLevel, flowChainPath } from '../src/app/core/flow-generator.ts';
+import { rectTopology } from '../src/app/core/topology.ts';
 
 let pass = 0, fail = 0;
 function ok(cond, msg) {
@@ -13,7 +14,7 @@ function section(t) { console.log('\n== ' + t + ' =='); }
 
 section('pack definitions');
 {
-  ok(PACKS.length === 7, `regular, bonus, hexes, rectangles, oddshapes, walls, warps packs (got ${PACKS.length})`);
+  ok(PACKS.length === 8, `regular, bonus, hexes, rectangles, oddshapes, walls, warps, chains packs (got ${PACKS.length})`);
   const ids = PACKS.map((p) => p.id);
   ok(new Set(ids).size === ids.length, 'pack ids unique');
   for (const p of PACKS) {
@@ -83,6 +84,11 @@ section('pack definitions');
   ok(!!warps && warps.kind === 'square' && warps.count === 60, 'warps pack: 60 toroidal levels');
   ok(!!warps && warps.warpForLevel && warps.warpForLevel(1) === true, 'warps pack marks every level warped');
   ok(!!warps && warps.sizeForLevel(1) === 5 && warps.sizeForLevel(60) === 7, 'warps pack ramps 5 to 7');
+  const chains = PACKS.find((p) => p.id === 'chains');
+  ok(!!chains && chains.kind === 'square' && chains.count === 60, 'chains pack: 60 one-stroke levels');
+  ok(!!chains && chains.chainForLevel && chains.chainForLevel(1) === true, 'chains pack marks every level chained');
+  ok(!!chains && chains.sizeForLevel(1) === 5 && chains.sizeForLevel(60) === 7, 'chains pack ramps 5 to 7');
+  ok(!warps.chainForLevel, 'warps pack is not chained');
 }
 
 section('pack levels generate valid puzzles');
@@ -138,6 +144,26 @@ for (const id of ['oddshapes', 'walls']) {
     if (id === 'oddshapes' && lv.walls) { bad++; console.error(`  UNEXPECTED WALLS: ${id} #${n}`); }
   }
   ok(bad === 0, `all ${p.count} ${id} levels generate valid (bad=${bad})`);
+}
+
+section('chains full sweep');
+{
+  const p = PACKS.find((x) => x.id === 'chains');
+  let bad = 0;
+  for (let n = 1; n <= p.count; n++) {
+    const { rows, cols } = p.shapeForLevel(n);
+    let lv;
+    try {
+      lv = generateLevel(p.seedForLevel(n), p.sizeForLevel(n), null, { rows, cols });
+    } catch (err) {
+      bad++; console.error(`  THREW: #${n}: ${err && err.message}`); continue;
+    }
+    const v = validateLevel(lv);
+    if (!v.ok) { bad++; console.error(`  INVALID: #${n}: ${v.errors[0]}`); continue; }
+    const order = flowChainPath(lv.pairs, rectTopology(rows, cols, false));
+    if (!order || order.order.length !== lv.numPairs) { bad++; console.error(`  UNCHAINED: #${n}`); continue; }
+  }
+  ok(bad === 0, `all 60 chains levels generate valid + one-stroke chainable (bad=${bad})`);
 }
 
 section('warps full sweep');

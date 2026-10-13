@@ -2,7 +2,7 @@
  * in-stroke un-cut, undo history, hints, win detection. A thin UI layer
  * (Angular component) owns rendering, persistence, sound, and timers. */
 
-import { defaultHexPairs, defaultPairsForSize, generateLevel, validateLevel } from './flow-generator';
+import { defaultHexPairs, defaultPairsForSize, flowChainPath, generateLevel, validateLevel } from './flow-generator';
 import type { Cell, GeneratedLevel } from './flow-generator';
 import { hexTopology, maskTopology, rectTopology, squareTopology } from './topology';
 import type { BoardKind, Mask, Topology } from './topology';
@@ -21,6 +21,9 @@ export interface ActiveStroke {
   breaks: StrokeBreak[];
   changed: boolean;
   pid: number;
+  /** Chain session marker: color pre-claimed by a handoff, so the run's
+   *  banked move covers it (burns free on first change, then clears). */
+  preClaim: number | null;
 }
 
 export interface EngineSnapshot {
@@ -77,6 +80,13 @@ export class FlowEngine {
   walls: Mask | undefined = undefined;
   /** Toroidal edges for square boards. */
   warp = false;
+  /** Chain mode: completing a flow and dragging into an adjacent incomplete
+   *  flow's dot hands the live stroke off instead of blocking. */
+  chain = false;
+  /** Chain funnel walls: blocked edges around the run's start/end dots (all
+   *  incident edges except the solution one). Static per level; paths and
+   *  snapshots never include them. Empty on non-chain boards. */
+  chainWalls: Array<readonly [Cell, Cell]> = [];
   numPairs = 4;
   pairs: [Cell, Cell][] = [];
   solution: Cell[][] = [];
@@ -114,7 +124,7 @@ export class FlowEngine {
     return this.topo.inBounds(r, c);
   }
 
-  loadLevel(mode: PlayMode, levelNum = 1, seed = '', size = 7, kind: BoardKind = 'square', rows = 0, cols = 0, mask: Mask | null = null, walls: Mask | null = null, warp = false): void {
+  loadLevel(mode: PlayMode, levelNum = 1, seed = '', size = 7, kind: BoardKind = 'square', rows = 0, cols = 0, mask: Mask | null = null, walls: Mask | null = null, warp = false, chain = false): void {
     this.mode = mode;
     if (mode === 'level') {
       this.levelNum = levelNum;
@@ -131,6 +141,7 @@ export class FlowEngine {
     this.mask = kind === 'square' && mask ? mask : undefined;
     this.walls = kind === 'square' && this.mask && walls ? walls : undefined;
     this.warp = kind === 'square' && !!warp && !mask && this.rows > 2 && this.cols > 2;
+    this.chain = !!chain;
     this.topo = kind === 'hex'
       ? hexTopology(this.rows, this.cols)
       : this.mask
@@ -146,23 +157,50 @@ export class FlowEngine {
     const opts = { kind, rows: this.rows, cols: this.cols, mask: this.mask, walls: this.walls, warp: this.warp };
 
     let lv: GeneratedLevel | null = null;
-    for (let t = 0; t < 6 && (!lv || !validateLevel(lv, this.topo).ok); t++) {
+    let lvSalt = this.seed;
+    let fallback: GeneratedLevel | null = null;
+    let fallbackSalt = this.seed;
+    for (let t = 0; t < 6 && !lv; t++) {
       const salt = t === 0 ? this.seed : `${this.seed}#${t}`;
       try {
         const cand = generateLevel(salt, Math.max(this.rows, this.cols), genPairs, opts);
-        lv = cand;
-        if (t > 0 && validateLevel(cand, this.topo).ok) this.seed = salt;
+        if (!validateLevel(cand, this.topo).ok) continue;
+        if (!this.chain || flowChainPath(cand.pairs, this.topo) !== null) {
+          lv = cand;
+          lvSalt = salt;
+        } else if (!fallback) {
+          // Valid but not one-stroke chainable: keep as a last resort so a
+          // chain board still loads (partial chains keep working).
+          fallback = cand;
+          fallbackSalt = salt;
+        }
       } catch {
         // Seed-specific carve failure: keep any previous candidate and try
         // the next salt instead of letting the exception escape.
       }
     }
+    lv = lv ?? fallback;
     if (!lv) throw new Error(`level generation failed for seed ${JSON.stringify(this.seed)}`);
+    this.seed = lvSalt;
     this.pairs = lv.pairs;
     this.solution = lv.solution;
     // Carved (hex) boards can land a different pair count than requested;
     // perfect-play math must use the actual board.
     this.numPairs = lv.solution.length;
+    // Chain funnels: wall every edge of the run's start/end dots except the
+    // solution edge, so the one-stroke run can only begin/end correctly.
+    // Blocked edges only ever touch the funneled dots, which no solution
+    // but the chain's own uses — solvability is preserved by construction.
+    this.chainWalls = [];
+    if (this.chain) {
+      const ch = flowChainPath(this.pairs, this.topo);
+      if (ch && ch.order.length > 0) {
+        const first = ch.order[0];
+        this.addFunnel(this.solution[first], ch.entries[0][0]);
+        const last = ch.order[ch.order.length - 1];
+        this.addFunnel(this.solution[last], ch.entries[ch.entries.length - 1][1]);
+      }
+    }
 
     this.paths = this.pairs.map(() => []);
     this.done = this.pairs.map(() => false);
@@ -184,6 +222,26 @@ export class FlowEngine {
     this.history = [];
     this.active = null;
     this.events = [];
+  }
+
+  /** True when a chain funnel wall blocks movement between two cells. */
+  edgeWalled(a: Cell, b: Cell): boolean {
+    return this.chainWalls.some(([x, y]) =>
+      (x[0] === a[0] && x[1] === a[1] && y[0] === b[0] && y[1] === b[1]) ||
+      (y[0] === a[0] && y[1] === a[1] && x[0] === b[0] && x[1] === b[1]));
+  }
+
+  /** Wall every edge of `dot` except the one continuing along `sol`. */
+  private addFunnel(sol: Cell[], dot: Cell): void {
+    if (sol.length < 2) return;
+    const open = eq(sol[0], dot) ? sol[1]
+      : eq(sol[sol.length - 1], dot) ? sol[sol.length - 2]
+        : null;
+    if (!open) return;
+    for (const nb of this.topo.neighbors(dot[0], dot[1])) {
+      if (nb[0] === open[0] && nb[1] === open[1]) continue;
+      this.chainWalls.push([dot.slice() as Cell, [nb[0], nb[1]]]);
+    }
   }
 
   rebuild(): void {
@@ -250,7 +308,7 @@ export class FlowEngine {
     this.pushHistory();
     const prevLen = this.paths[color].length;
     this.paths[color] = [from.slice() as Cell];
-    this.active = { color, last: from.slice() as Cell, breaks: [], changed: false, pid };
+    this.active = { color, last: from.slice() as Cell, breaks: [], changed: false, pid, preClaim: null };
     // Clearing an existing pipe is itself a board change: attribute it now.
     // A bare-dot tap changes nothing and stays free.
     if (prevLen >= 2) this.markChanged(color);
@@ -259,7 +317,7 @@ export class FlowEngine {
 
   /** Continue an existing pipe from the middle (already trimmed by caller). */
   grabStroke(color: number, from: Cell, pid: number): void {
-    this.active = { color, last: from.slice() as Cell, breaks: [], changed: false, pid };
+    this.active = { color, last: from.slice() as Cell, breaks: [], changed: false, pid, preClaim: null };
   }
 
   /* Moves are session-collapsed: consecutive strokes on the same color cost
@@ -272,6 +330,16 @@ export class FlowEngine {
     const a = this.active;
     if (!a) return;
     a.changed = true;
+    // A chain handoff pre-claims the new color for this session: the run's
+    // move was banked on the previous color. Consuming the claim banks the
+    // collapse state too, so every later change this session stays free.
+    // (An unconsumed claim dies with the stroke, never leaking into
+    // later sessions via lastCounted.)
+    if (a.preClaim === color) {
+      a.preClaim = null;
+      this.lastCounted = color;
+      return;
+    }
     if (this.lastCounted !== color) {
       this.lastCounted = color;
       this.moves++;
@@ -307,17 +375,30 @@ export class FlowEngine {
   /** Pointer moved; engine interpolates orthogonally cell-by-cell.
    *  Reaching the matching dot connects the flow, but the stroke stays
    *  alive: it cannot be dragged past the dot (capped), yet dragging back
-   *  out of it keeps control to re-route the tail. Release finalizes. */
+   *  out of it keeps control to re-route the tail. Release finalizes.
+   *  In chain mode a handoff swaps the active color mid-drag; the rest of
+   *  the drag keeps routing toward the same target under the new color. */
   pointerMove(r: number, c: number, pid: number): void {
     if (!this.active || pid !== this.active.pid) return;
     if (!this.inBounds(r, c)) return;
-    const last = this.active.last;
-    if (r === last[0] && c === last[1]) return;
-    const color = this.active.color;
-    for (const s of this.stepsBetween(last, [r, c], color)) {
-      if (!this.applyStep(color, s)) break;
-      this.active.last = s.slice() as Cell;
-      this.active.changed = true;
+    const target: Cell = [r, c];
+    for (let hop = 0; hop <= this.numPairs; hop++) {
+      const a = this.active;
+      if (!a) break;
+      if (a.last[0] === target[0] && a.last[1] === target[1]) break;
+      const color = a.color;
+      const steps = this.stepsBetween(a.last, target, color);
+      if (steps.length === 0) break;
+      let advanced = false;
+      for (const s of steps) {
+        if (!this.applyStep(color, s)) break;
+        advanced = true;
+        if (!this.active) break;
+        this.active.last = s.slice() as Cell;
+        this.active.changed = true;
+        if (this.active.color !== color) break; // handoff: re-route below
+      }
+      if (!advanced) break;
     }
     this.rebuild();
   }
@@ -350,6 +431,7 @@ export class FlowEngine {
     const guard = this.topo.total + 8;
     const isFree = (rr: number, cc: number): boolean => {
       if (!this.inBounds(rr, cc)) return false;
+      if (this.edgeWalled(cur, [rr, cc] as Cell)) return false;
       const k = this.key(rr, cc);
       if (this.paths[color].some(([pr, pc]) => pr === rr && pc === cc)) return true;
       const epc = this.epOf.get(k);
@@ -401,16 +483,28 @@ export class FlowEngine {
       return true;
     }
     if (!this.topo.neighbors(head[0], head[1]).some(([rr, cc]) => rr === r && cc === c)) return false;
-
-    // Connected flows are capped at their dot: stepping back along the pipe
-    // stays live (handled above), but pushing past the endpoint is refused.
-    if (this.done[color]) return false;
+    // Chain funnel walls block every incident edge of the run's start/end
+    // dots except the solution one (retreating along own pipe is above).
+    if (this.edgeWalled(head, [r, c] as Cell)) {
+      this.events.push('blocked');
+      return false;
+    }
 
     const epc = this.epOf.get(this.key(r, c));
     if (epc !== undefined && epc !== color) {
+      // Chain handoff: the completed flow's head stepped into an adjacent
+      // incomplete flow's dot, so the same stroke continues in the new color
+      // (same pid, history entry, and move).
+      if (this.chain && this.done[color] && !this.done[epc]) {
+        this.handoff(epc, [r, c]);
+        return true;
+      }
       this.events.push('blocked');
       return false; // other dots are walls
     }
+    // Connected flows are capped at their dot: stepping back along the pipe
+    // stays live (handled above), but pushing past the endpoint is refused.
+    if (this.done[color]) return false;
     const occ = this.grid[this.key(r, c)];
     if (occ === -1 || epc === color) {
       this.markChanged(color);
@@ -433,6 +527,16 @@ export class FlowEngine {
     this.events.push('cut');
     this.rebuild();
     return true;
+  }
+
+  /** Chain handoff: seed the next flow at its dot and keep the stroke alive
+   *  under the same pid. No history push (the whole chain undoes as one
+   *  action); the run's move stays banked via a pre-claim on the new color. */
+  private handoff(color: number, dot: Cell): void {
+    const pid = this.active ? this.active.pid : 0;
+    this.paths[color] = [dot.slice() as Cell];
+    this.active = { color, last: dot.slice() as Cell, breaks: [], changed: true, pid, preClaim: color };
+    this.rebuild();
   }
 
   undo(): boolean {
@@ -493,7 +597,8 @@ export class FlowEngine {
     if (!this.done.every(Boolean)) return false;
     if (this.filledCount() !== this.topo.cells) return false;
     this.won = true;
-    const perfect = this.moves <= this.numPairs && this.hints === 0;
+    // Chain boards are one-stroke puzzles: perfect demands the single move.
+    const perfect = (this.chain ? this.moves <= 1 : this.moves <= this.numPairs) && this.hints === 0;
     this.win = { moves: this.moves, hints: this.hints, perfect, stars: perfect ? 3 : 1 };
     return true;
   }

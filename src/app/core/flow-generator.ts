@@ -665,6 +665,69 @@ export function generateLevel(
   };
 }
 
+/** A one-stroke chain order: `order` covers every flow, and `entries[i]` is
+ *  the [entryDot, exitDot] pair flow `order[i]` is drawn through, with the
+ *  exit dot touching the next flow's entry dot. Interior flows therefore use
+ *  distinct dots for entry and exit, so the order is genuinely drawable in
+ *  a single stroke (not just linked in the abstract). */
+export interface ChainResult {
+  order: number[];
+  entries: Array<[Cell, Cell]>;
+}
+
+/** Flow-adjacency chain over topo neighbors. K is small in practice (chain
+ *  packs stay <= 7 pairs), so DFS over (flow, entryDot) states suffices. */
+export function flowChainPath(pairs: [Cell, Cell][], topo: Topology): ChainResult | null {
+  const K = pairs.length;
+  if (K === 0) return null;
+  if (K === 1) {
+    const [a, b] = pairs[0];
+    return { order: [0], entries: [[[a[0], a[1]] as Cell, [b[0], b[1]] as Cell]] };
+  }
+  const path: Array<{ f: number; entry: number }> = [];
+  const used = new Array<boolean>(K).fill(false);
+  const touches = (cell: Cell, dot: Cell): boolean =>
+    topo.neighbors(cell[0], cell[1]).some(([r, c]) => r === dot[0] && c === dot[1]);
+  const dfs = (): boolean => {
+    if (path.length === K) return true;
+    if (path.length === 0) {
+      for (let f = 0; f < K; f++) {
+        for (let en = 0; en < 2; en++) {
+          used[f] = true;
+          path.push({ f, entry: en });
+          if (dfs()) return true;
+          path.pop();
+          used[f] = false;
+        }
+      }
+      return false;
+    }
+    const top = path[path.length - 1];
+    const exit = pairs[top.f][1 - top.entry];
+    for (let j = 0; j < K; j++) {
+      if (used[j]) continue;
+      for (let d = 0; d < 2; d++) {
+        if (!touches(exit, pairs[j][d])) continue;
+        used[j] = true;
+        path.push({ f: j, entry: d });
+        if (dfs()) return true;
+        path.pop();
+        used[j] = false;
+      }
+    }
+    return false;
+  };
+  if (!dfs()) return null;
+  return {
+    order: path.map((s) => s.f),
+    entries: path.map((s) => {
+      const en = pairs[s.f][s.entry];
+      const ex = pairs[s.f][1 - s.entry];
+      return [[en[0], en[1]] as Cell, [ex[0], ex[1]] as Cell];
+    }),
+  };
+}
+
 /** Validate a level object. Topology defaults from the level itself
  *  (square unless kind/rows/cols say hex). */
 export function validateLevel(level: FlowLevel, topo?: Topology): ValidationResult {

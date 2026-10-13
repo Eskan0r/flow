@@ -4,6 +4,7 @@
  * in-stroke un-cut, undo, reset, hints, move counting.
  */
 import { FlowEngine } from '../src/app/core/flow-engine.ts';
+import { flowChainPath } from '../src/app/core/flow-generator.ts';
 
 let pass = 0, fail = 0;
 function ok(cond, msg) {
@@ -319,6 +320,147 @@ section('toroidal (warp) boards play end to end');
   w.pointerMove(nb[0], nb[1], 2);
   ok(w.paths[0].length === 2, 'stroke advanced through a (possibly wrapped) neighbor');
   w.pointerUp(2);
+}
+
+/** Deterministic chain scenes (hand-laid, no generated-geometry luck).
+ *  Default: A's end dot (0,1) touches B's start dot (0,2). */
+function chainScene(chain = true, pairs = [[[0, 0], [0, 1]], [[0, 2], [0, 3]]]) {
+  const e = new FlowEngine();
+  e.loadLevel('seed', 0, 'chain-hand', 5, 'square', 5, 5, null, null, false, chain);
+  e.pairs = pairs;
+  e.solution = pairs.map(([a, b]) => [a.slice(), b.slice()]);
+  e.numPairs = pairs.length;
+  e.paths = pairs.map(() => []);
+  e.done = pairs.map(() => false);
+  e.epOf = new Map();
+  e.epSet = new Set();
+  e.pairs.forEach(([a, b], ci) => {
+    e.epOf.set(e.key(a[0], a[1]), ci);
+    e.epOf.set(e.key(b[0], b[1]), ci);
+    e.epSet.add(e.key(a[0], a[1]));
+    e.epSet.add(e.key(b[0], b[1]));
+  });
+  e.rebuild();
+  // hand-laid pairs replace the generated ones funnels were built for
+  e.chainWalls = [];
+  return e;
+}
+
+section('chain handoff continues one stroke in the next color, one move');
+{
+  const e = chainScene(true);
+  e.pointerDown(0, 0, 1);
+  e.pointerMove(0, 1, 1);
+  ok(e.done[0], 'A connected');
+  ok(e.active !== null && e.active.color === 0, 'stroke alive on A dot');
+  ok(e.moves === 1, 'drawing A banked the one move');
+  // drag across the seam into B's adjacent dot: handoff, same stroke
+  e.pointerMove(0, 2, 1);
+  ok(e.active !== null && e.active.color === 1, 'handoff switched to B');
+  ok(e.active.pid === 1, 'same pointer id across the handoff');
+  ok(JSON.stringify(e.paths[1]) === JSON.stringify([[0, 2]]), 'B seeded at its dot');
+  ok(e.paths[0].length === 2 && e.done[0], 'A untouched by the handoff');
+  ok(e.moves === 1, 'handoff adds no move');
+  // finish B without releasing: still one move for the whole run
+  e.pointerMove(0, 3, 1);
+  e.pointerUp(1);
+  ok(e.done[1], 'B connected in the same stroke');
+  ok(e.moves === 1, `chained run counts one move (got ${e.moves})`);
+  // the handoff pushed no history: one undo clears the whole chain
+  ok(e.undo(), 'undo works');
+  ok(e.paths[0].length === 0 && e.paths[1].length === 0, 'single undo cleared both flows');
+}
+
+section('chain handoff refused cases stay blocked');
+{
+  // incomplete current flow: B's dot touches A's start, so entering it
+  // cannot complete A first — rival dots stay walls mid-flow
+  const e = chainScene(true, [[[0, 0], [2, 0]], [[0, 1], [2, 2]]]);
+  e.pointerDown(0, 0, 1);
+  e.pointerMove(0, 1, 1);
+  ok(e.paths[1].length === 0, 'no handoff before the current flow completes');
+  ok(e.active !== null && e.active.color === 0, 'stroke stays on A');
+  e.pointerUp(1);
+  // completed target flow: its dots stay walls, no re-handoff
+  const f = chainScene(true);
+  drawPath(f, [[0, 2], [0, 3]]);
+  ok(f.done[1], 'B drawn first');
+  drawPath(f, [[0, 0], [0, 1]]);
+  ok(f.done[0], 'A drawn second');
+  f.pointerDown(0, 1, 5);
+  f.pointerMove(0, 2, 5);
+  ok(f.active !== null && f.active.color === 0, 'done target dot blocks, stays on A');
+  f.pointerUp(5);
+  // chain mode off: completion + adjacency still blocks (legacy behavior)
+  const g = chainScene(false);
+  g.pointerDown(0, 0, 7);
+  g.pointerMove(0, 1, 7);
+  ok(g.done[0], 'A connected on a non-chain board');
+  g.pointerMove(0, 2, 7);
+  ok(g.paths[1].length === 0, 'no handoff when chain mode is off');
+  ok(g.active !== null && g.active.color === 0, 'stroke stays on A');
+  ok(g.moves === 1, 'no extra move from the refused step');
+  g.pointerUp(7);
+}
+
+section('full board in one chained stroke wins with one move');
+{
+  const e = new FlowEngine();
+  e.loadLevel('seed', 0, 'flow-chains-1', 5, 'square', 5, 5, null, null, false, true);
+  ok(e.chain === true, 'chain flag on');
+  const ch = flowChainPath(e.pairs, e.topo);
+  ok(ch !== null && ch.order.length === e.numPairs, `chain order covers every flow (${JSON.stringify(ch && ch.order)})`);
+  const order = ch.order;
+  // draw every flow from its chain entry dot to its exit dot, one stroke
+  const en0 = ch.entries[0][0];
+  e.pointerDown(en0[0], en0[1], 1);
+  for (let oi = 0; oi < order.length; oi++) {
+    const sg = e.solution[order[oi]];
+    const [en, ex] = ch.entries[oi];
+    void ex;
+    const cells = (en[0] === sg[0][0] && en[1] === sg[0][1]) ? sg : sg.slice().reverse();
+    for (const cell of cells) e.pointerMove(cell[0], cell[1], 1);
+  }
+  ok(e.active !== null && e.active.pid === 1, 'one unbroken stroke throughout');
+  e.pointerUp(1);
+  ok(e.won, 'chained full-board stroke wins');
+  ok(e.moves === 1, `whole board in one move (got ${e.moves})`);
+  ok(e.win && e.win.stars === 3, 'one-move solve is perfect');
+}
+
+section('chain funnels wall the run start except the solution edge');
+{
+  const e = new FlowEngine();
+  e.loadLevel('seed', 0, 'flow-chains-1', 5, 'square', 5, 5, null, null, false, true);
+  ok(e.chainWalls.length > 0, `funnel walls built (${e.chainWalls.length})`);
+  const ch = flowChainPath(e.pairs, e.topo);
+  const first = ch.order[0];
+  const S = ch.entries[0][0];
+  const sol = e.solution[first];
+  const open = (S[0] === sol[0][0] && S[1] === sol[0][1]) ? sol[1] : sol[sol.length - 2];
+  const blocked = e.topo.neighbors(S[0], S[1]).filter(([r, c]) => !(r === open[0] && c === open[1]));
+  ok(blocked.length === e.topo.neighbors(S[0], S[1]).length - 1, 'every start edge walled but the solution one');
+  e.pointerDown(S[0], S[1], 1);
+  for (const [r, c] of blocked) {
+    e.pointerMove(r, c, 1);
+    ok(e.paths[first].length === 1, `walled edge from the start refused (${r},${c})`);
+  }
+  ok(e.active !== null && e.active.color === first, 'stroke alive after pushing at walls');
+  e.pointerMove(open[0], open[1], 1);
+  ok(e.paths[first].length === 2, 'solution edge still open');
+  ok(e.moves === 1, 'probing walls counted the one move');
+  e.pointerUp(1);
+}
+
+section('chain perfect demands the single move');
+{
+  const e = new FlowEngine();
+  e.loadLevel('seed', 0, 'flow-chains-1', 5, 'square', 5, 5, null, null, false, true);
+  // same board solved flow-by-flow: a win, but not a perfect one
+  e.solution.forEach((sg) => drawPath(e, sg));
+  ok(e.won, 'flow-by-flow still wins');
+  ok(e.moves === e.numPairs, `one move per flow (got ${e.moves})`);
+  ok(e.win && e.win.stars === 1, 'multi-move chain solve is not perfect');
 }
 
 console.log(`\n----------------------------------------\nENGINE: PASS ${pass} · FAIL ${fail}`);

@@ -258,7 +258,21 @@ across topologies -> do last.
   engine `loadLevel(..., warp)`, `Pack.warpForLevel` + new 60-level **Warps**
   pack (5x5→7x7). Renderer unwraps flow polylines and tiles the flow layer 3x3
   (clipped) so pipes/dots join across seams. `npm test` + build green.
-- [ ] **5. Continuous chain** — engine/UX-heavy, needs per-topology endpoint geometry.
+- [x] **5. Continuous chain** — DONE (2026-10-13). Engine `chain` flag
+  (`loadLevel(..., chain)`): completing a flow and dragging into an adjacent
+  incomplete flow's dot hands the live stroke off under the same pid, history
+  entry, and move (pre-claimed `lastCounted` via `ActiveStroke.preClaim`;
+  single undo clears the whole chain). `flowChainPath(pairs, topo)` returns a
+  traversable Hamiltonian order plus per-flow entry/exit dots; engine
+  salt-retries chain boards until one is chainable (square snake partitions
+  chain by construction, verified 120/120). Chain funnels: blocked edges
+  (`engine.chainWalls`) wall the run's start/end dots on every side but the
+  solution edge — enforced in `applyStep`/`stepsBetween`, drawn as cream
+  brackets, solvability preserved since funneled dots touch no other
+  solution. Chain perfect demands the single move (`moves <= 1`). Chain
+  boards get a territory wash (owned cells tinted under grid/pipes). New
+  60-level **Chains** pack (5x5→7x7, `Pack.chainForLevel`).
+  `npm test` + build green.
 
 ## Review notes (independent pass)
 
@@ -269,3 +283,24 @@ across topologies -> do last.
   schema versioning; new tests per feature; renderer boundary/warp handling;
   carve feasibility on thin corridors; retune invariants per topology (hex
   already tolerates more straights than square).
+
+
+## Future Ideas
+
+(prerequesite)
+Requires backend, I have supabase account we can do it there unless you 
+have a better idea, would just store google oauth credentials given
+as well as preferences and money and such. 
+- Add a shop tab that is disabled but visible to add users, when any
+  users hover over the shop tab, a sign in with google button pops
+  up like a disappearing game ui where if you do an action that 
+  warrants seeing it then it'll pop up for like 30 seconds before 
+  disappearing again or if you click a level, in which case it 
+  would still be there but would look different or just be in 
+  different places. Shop tab would have daily coins that you can
+  collect, would be able to use money from the os.ronakchavva.com
+  stock simulator.
+- shop tab will have different skins, as well as a customizable base 
+  background that any users as long as they have signed in with google
+  would be able to change for free. like they could make their 
+  background pink instead of white (default). 

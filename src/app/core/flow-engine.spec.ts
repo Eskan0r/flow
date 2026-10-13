@@ -29,7 +29,7 @@ describe('FlowEngine', () => {
     e.rebuild();
     e.drainEvents();
     e.pushHistory();
-    e.active = { color: 1, last: [1, 2], breaks: [], changed: true, pid: 5 };
+    e.active = { color: 1, last: [1, 2], breaks: [], changed: true, pid: 5, preClaim: null };
     expect(e.applyStep(1, [2, 2])).toBe(true);
     expect(e.paths[0].length).toBe(1);
     e.applyStep(1, [1, 2]);

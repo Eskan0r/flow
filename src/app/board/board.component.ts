@@ -24,6 +24,12 @@ const PALETTE = [
   '#00e676', '#f48fb1',
 ];
 
+/** Hex color with an alpha channel for washes and glows. */
+function hexA(hex: string, alpha: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+}
+
 @Component({
   selector: 'flow-board',
   template: `
@@ -164,6 +170,7 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
       dotR = s * 0.52;
       edge = s * 0.12;
     } else {
+      if (e.chain) this.drawChainTint(g);
       if (e.topo.mask) this.drawPolyGrid(g);
       else if (!e.topo.warp) this.drawSquareGrid(g);
       const m = this.squareMetrics();
@@ -228,6 +235,56 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
     } else {
       drawFlows(g);
     }
+    if (e.chain) this.drawChainWalls(g);
+  }
+
+  /** Chain territory wash: each owned cell tinted its flow's color under the
+   *  grid and pipes (chain boards only). */
+  private drawChainTint(g: CanvasRenderingContext2D): void {
+    const e = this.store.engine;
+    if (e.topo.kind !== 'square') return;
+    const m = this.squareMetrics();
+    for (let r = 0; r < e.topo.rows; r++) {
+      for (let c = 0; c < e.topo.cols; c++) {
+        const ci = e.grid[e.key(r, c)];
+        if (ci < 0) continue;
+        g.fillStyle = hexA(PALETTE[ci % PALETTE.length], 0.15);
+        g.fillRect(m.ox + c * m.w, m.oy + r * m.h, m.w + 0.5, m.h + 0.5);
+      }
+    }
+  }
+
+  /** Chain funnel walls: cream brackets on the blocked edges around the
+   *  run's start/end dots (square boards only; logic holds everywhere). */
+  private drawChainWalls(g: CanvasRenderingContext2D): void {
+    const e = this.store.engine;
+    if (e.topo.kind !== 'square' || e.chainWalls.length === 0) return;
+    const m = this.squareMetrics();
+    g.save();
+    g.strokeStyle = 'rgba(240, 226, 182, 0.92)';
+    g.lineWidth = 3;
+    g.lineCap = 'round';
+    g.shadowColor = 'rgba(240, 226, 182, 0.5)';
+    g.shadowBlur = 4;
+    g.beginPath();
+    for (const [a, b] of e.chainWalls) {
+      const dr = Math.abs(a[0] - b[0]);
+      const dc = Math.abs(a[1] - b[1]);
+      if (dr + dc !== 1) continue; // wrapped seam edge: enforced, not drawn
+      if (dr === 0) {
+        const x = m.ox + Math.max(a[1], b[1]) * m.w;
+        const y = m.oy + a[0] * m.h;
+        g.moveTo(x, y + 2);
+        g.lineTo(x, y + m.h - 2);
+      } else {
+        const y = m.oy + Math.max(a[0], b[0]) * m.h;
+        const x = m.ox + a[1] * m.w;
+        g.moveTo(x + 2, y);
+        g.lineTo(x + m.w - 2, y);
+      }
+    }
+    g.stroke();
+    g.restore();
   }
 
   /** Warp boards: the board reads as a window on a torus. The interior stays
