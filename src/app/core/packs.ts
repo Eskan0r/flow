@@ -195,7 +195,7 @@ export const PACKS: Pack[] = [
   uniformPack({
     id: 'chains',
     name: 'Chains',
-    desc: 'One-stroke boards: drag across touching dots, 5x5 to 7x7',
+    desc: 'One-stroke boards: drag across touching dots',
     color: '#e11d48',
     kind: 'square',
     count: 60,
