@@ -62,4 +62,48 @@ describe('FlowEngine', () => {
     expect(e.reset()).toBe(true);
     expect(e.paths.every((p) => p.length === 0)).toBe(true);
   });
+
+  it('undo never refunds moves or hint usage and ends a live stroke', () => {
+    const e = new FlowEngine();
+    e.loadLevel('level', 1);
+    drawPath(e, e.solution[0]);
+    drawPath(e, e.solution[1]);
+    expect(e.moves).toBe(2);
+    expect(e.undo()).toBe(true);
+    expect(e.moves).toBe(2);
+    expect(e.undo()).toBe(true);
+    expect(e.moves).toBe(2);
+    e.hint();
+    e.undo();
+    expect(e.hints).toBe(1);
+    drawPath(e, e.solution[0]);
+    const dot = e.solution[1][0];
+    e.pointerDown(dot[0], dot[1], 9);
+    e.undo();
+    expect(e.active).toBeNull();
+    for (const path of e.solution) drawPath(e, path);
+    expect(e.win?.perfect).toBe(false);
+  });
+
+  it('a second pointer cannot replace the current stroke', () => {
+    const e = new FlowEngine();
+    e.loadLevel('level', 1);
+    const a = e.pairs[0][0], b = e.pairs[1][0];
+    e.pointerDown(a[0], a[1], 1);
+    expect(e.pointerDown(b[0], b[1], 2)).toBe('none');
+    expect(e.active?.pid).toBe(1);
+    expect(e.history.length).toBe(1);
+  });
+
+  it('normalizes hostile dimensions before allocating the board', () => {
+    const e = new FlowEngine();
+    e.loadLevel('seed', 0, 'dimension-bounds', 5, 'square', 1, 5);
+    expect(e.rows).toBe(4);
+    expect(e.cols).toBe(5);
+    expect(e.grid.length).toBe(20);
+    e.loadLevel('seed', 0, 'dimension-bounds', 5, 'square', 1000000, 5);
+    expect(e.rows).toBe(12);
+    expect(e.cols).toBe(5);
+    expect(e.grid.length).toBe(60);
+  });
 });

@@ -153,7 +153,7 @@ section('undo / reset / hint');
   drawPath(e, e.solution[0]);
   ok(e.undo(), 'undo after a stroke');
   ok(e.paths[0].length === 0, 'undo cleared the stroke');
-  ok(e.moves === 1, 'undo itself counts as a move');
+  ok(e.moves === 1, 'undo preserves the spent move without adding a penalty');
   drawPath(e, e.solution[0]);
   drawPath(e, e.solution[1]);
   ok(e.reset(), 'reset works');

@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { App } from './app';
 import type { FlowEngine } from './core/flow-engine';
 import type { Cell } from './core/flow-generator';
-import type { FlowStore } from './core/flow-store';
+import { FlowStore } from './core/flow-store';
 import { flowChainPath } from './core/flow-generator';
 import { PACKS, dailySpec } from './core/packs';
 
@@ -97,6 +97,115 @@ describe('App', () => {
     expect(document.querySelector('[data-testid=reset-btn]')?.hasAttribute('disabled')).toBe(true);
   });
 
+  it('reload resumes daily paths, move costs, hints and undo history', async () => {
+    const { store } = await boot('/?seed=daily-2026-09-26-1');
+    const e = store.engine;
+    drawCells(e, e.solution[0]);
+    drawCells(e, e.solution[1]);
+    store.hint();
+    store.undo();
+    store.ensureClock();
+    store.refresh();
+    const snapshot = e.snapshot();
+    const depth = e.history.length;
+    const reloaded = TestBed.runInInjectionContext(() => new FlowStore());
+    reloaded.boot();
+    expect(reloaded.engine.snapshot()).toEqual(snapshot);
+    expect(reloaded.engine.history.length).toBe(depth);
+    reloaded.undo();
+    expect(reloaded.engine.moves).toBe(snapshot.moves);
+    expect(reloaded.engine.hints).toBe(1);
+  });
+
+  it('checkpoints an unfinished drag when the page is hidden', async () => {
+    const { store } = await boot('/?seed=daily-2026-09-26-1');
+    const path = store.engine.solution[0];
+    store.engine.pointerDown(path[0][0], path[0][1], 1);
+    store.engine.pointerMove(path[1][0], path[1][1], 1);
+    store.ensureClock();
+    document.dispatchEvent(new Event('visibilitychange'));
+    const reloaded = TestBed.runInInjectionContext(() => new FlowStore());
+    reloaded.boot();
+    expect(reloaded.engine.moves).toBe(1);
+    expect(reloaded.engine.paths[0]).toEqual(path.slice(0, 2));
+    expect(reloaded.engine.active).toBeNull();
+  });
+
+  it('reopening a daily through settings or the seed field preserves the canonical attempt', async () => {
+    const { store } = await boot('/?seed=daily-2026-09-26-3');
+    drawCells(store.engine, store.engine.solution[0]);
+    const snapshot = store.engine.snapshot();
+    store.showPacks();
+    store.playCustom('daily-2026-09-26-3', 5, 'hex');
+    const spec = dailySpec('2026-09-26', 3);
+    expect(store.engine.rows).toBe(spec.rows);
+    expect(store.engine.cols).toBe(spec.cols);
+    expect(store.engine.topo.kind).toBe(spec.kind);
+    expect(store.engine.snapshot()).toEqual(snapshot);
+    store.setSize(5);
+    expect(store.engine.snapshot()).toEqual(snapshot);
+  });
+
+  it('completed daily seeds cannot bypass the menu guard and undo cannot reopen a win', async () => {
+    const { store } = await boot('/?seed=daily-2026-09-26-1');
+    for (const path of store.engine.solution) drawCells(store.engine, path);
+    store.refresh();
+    const snapshot = store.engine.snapshot();
+    store.undo();
+    expect(store.engine.won).toBe(true);
+    expect(store.engine.snapshot()).toEqual(snapshot);
+    store.playCustom('daily-2026-09-26-1', 5, 'square');
+    expect(store.view()).toBe('dailies');
+  });
+
+  it('custom replay preserves rectangular and variant rules and resets the displayed clock', async () => {
+    const { store } = await boot('/?seed=replay-rect&size=6&rows=4&cols=7&warp=1&chain=1');
+    const pairs = JSON.stringify(store.engine.pairs);
+    store.time.set('2:12');
+    store.replay();
+    expect(store.engine.rows).toBe(4);
+    expect(store.engine.cols).toBe(7);
+    expect(store.engine.warp).toBe(true);
+    expect(store.engine.chain).toBe(true);
+    expect(JSON.stringify(store.engine.pairs)).toBe(pairs);
+    expect(store.time()).toBe('0:00');
+  });
+
+  it('ignores a damaged daily checkpoint without breaking play', async () => {
+    const { store } = await boot('/?seed=daily-2026-09-26-1');
+    const key = `flow.attempt.${store.engine.seed}`;
+    const saved = JSON.parse(localStorage.getItem(key)!);
+    saved.state.paths[0] = [[999, 999]];
+    localStorage.setItem(key, JSON.stringify(saved));
+    const reloaded = TestBed.runInInjectionContext(() => new FlowStore());
+    expect(() => reloaded.boot()).not.toThrow();
+    expect(reloaded.engine.moves).toBe(0);
+    expect(reloaded.engine.paths.every((p) => p.length === 0)).toBe(true);
+  });
+
+  it('pauses daily time in menus and preserves elapsed time for a winning hint', async () => {
+    const { store } = await boot('/?seed=daily-2026-09-26-1');
+    const now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      for (const path of store.engine.solution.slice(0, -1)) drawCells(store.engine, path);
+      store.ensureClock();
+      clock.mockReturnValue(now + 12000);
+      store.showDailies();
+      const saved = JSON.parse(localStorage.getItem(`flow.attempt.${store.engine.seed}`)!);
+      expect(saved.running).toBe(false);
+      expect(saved.elapsed).toBe(12);
+      clock.mockReturnValue(now + 72000);
+      store.daily(1, '2026-09-26');
+      expect(store.time()).toBe('0:12');
+      store.hint();
+      expect(store.engine.won).toBe(true);
+      expect(store.time()).toBe('0:12');
+      const best = JSON.parse(localStorage.getItem(`flow.best.${store.engine.seed}.s${store.engine.rows}x${store.engine.cols}`)!);
+      expect(best.t).toBe(12);
+    } finally { clock.mockRestore(); }
+  });
+
   it('daily win hides Share until all 5 dailies are done', async () => {
     const { fixture, store } = await boot();
     store.daily(1);
@@ -111,8 +220,9 @@ describe('App', () => {
     expect(document.querySelector('[data-testid=share-text]')).toBeNull();
     expect(document.querySelector('[data-testid=replay-btn]')).toBeNull();
     const today = store.dailyLabelToday();
+    const mark = store.engine.win?.perfect ? '⭐' : '✅';
     expect(store.shareText(today)).toBe(
-      `roflow daily ${today}\n⭐⬛⬛⬛⬛\nstreak: 0\nroflow.ronakchavva.com`,
+      `roflow daily ${today}\n${mark}⬛⬛⬛⬛\nstreak: 0\nroflow.ronakchavva.com`,
     );
   });
 

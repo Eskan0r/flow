@@ -116,7 +116,7 @@ export class App implements OnInit {
 
   @HostListener('window:keydown', ['$event'])
   onKey(ev: KeyboardEvent): void {
-    if (this.store.view() !== 'game') return;
+    if (this.store.view() !== 'game' || this.store.winOpen()) return;
     const t = ev.target as HTMLElement | null;
     const tag = t?.tagName ?? '';
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;

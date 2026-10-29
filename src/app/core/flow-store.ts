@@ -3,11 +3,11 @@
  * Framework touchpoints (dialog service, storage) live here - the engine
  * itself stays pure. */
 
-import { Injectable, inject, signal } from '@angular/core';
+import { DestroyRef, Injectable, inject, signal } from '@angular/core';
 import type { BrnDialogRef } from '@spartan-ng/brain/dialog';
 import { HlmDialogService } from '../ui/dialog';
 import { WinDialogComponent, type WinDialogContext } from '../win-dialog/win-dialog.component';
-import { FlowEngine, randomSeed } from './flow-engine';
+import { FlowEngine, randomSeed, type EngineSnapshot } from './flow-engine';
 import { DAILY_COUNT, PACKS, dailyLabel, dailySeed, dailyShareCard, dailySpec, packById, parseDailySeed, type DailyMark, type Pack } from './packs';
 import { Sound } from './sound';
 import type { BoardKind } from './topology';
@@ -60,9 +60,22 @@ export class FlowStore {
   private timerId = 0;
   private toastTimer = 0;
   private dialogRef: BrnDialogRef<unknown> | null = null;
+  private checkpointTimer = 0;
+  private readonly progressCache = new Map<string, { version: number; done: number; total: number }>();
 
   constructor() {
     this.sound.enabled = true;
+    const save = () => this.saveDailyAttempt();
+    window.addEventListener('pagehide', save);
+    document.addEventListener('visibilitychange', save);
+    inject(DestroyRef).onDestroy(() => {
+      save();
+      this.stopClock();
+      clearTimeout(this.toastTimer);
+      clearTimeout(this.checkpointTimer);
+      window.removeEventListener('pagehide', save);
+      document.removeEventListener('visibilitychange', save);
+    });
   }
 
   // ---------- boot / routing ----------
@@ -152,6 +165,8 @@ export class FlowStore {
   // ---------- views & packs ----------
 
   showPacks(): void {
+    this.stopClock();
+    this.saveDailyAttempt();
     this.closeDialog();
     this.pack.set(null);
     this.view.set('packs');
@@ -159,6 +174,8 @@ export class FlowStore {
   }
 
   showDailies(): void {
+    this.stopClock();
+    this.saveDailyAttempt();
     this.closeDialog();
     this.pack.set(null);
     this.view.set('dailies');
@@ -166,6 +183,8 @@ export class FlowStore {
   }
 
   openPack(p: Pack): void {
+    this.stopClock();
+    this.saveDailyAttempt();
     this.closeDialog();
     this.pack.set(p);
     this.view.set('levels');
@@ -181,6 +200,8 @@ export class FlowStore {
 
   /** Play a pack level. Silent skips the click sound (used by boot). */
   playPackLevel(p: Pack, n: number, announce = true): void {
+    this.stopClock();
+    this.saveDailyAttempt();
     const level = Math.min(Math.max(1, n), p.count);
     this.pack.set(p);
     this.packLevel.set(level);
@@ -203,10 +224,17 @@ export class FlowStore {
     this.pack.set(null);
     this.kind.set(k);
     this.loadSeed(seed, size, k, rows, cols);
-    this.view.set('game');
   }
 
   loadSeed(seed: string, size: number, kind?: BoardKind, rows = 0, cols = 0, warp = false, chain = false): void {
+    const daily = parseDailySeed(seed);
+    if (daily) {
+      this.daily(daily.index, daily.date);
+      return;
+    }
+    this.stopClock();
+    this.saveDailyAttempt();
+    this.pack.set(null);
     const k = kind ?? this.kind();
     this.kind.set(k);
     this.engine.loadLevel('seed', 0, seed, size, k, rows, cols, null, null, warp, chain);
@@ -215,6 +243,8 @@ export class FlowStore {
   }
 
   newRandom(): void {
+    this.stopClock();
+    this.saveDailyAttempt();
     // Different seeds can still land on the same small-board layout, so
     // re-roll until the puzzle actually changes (keeps "New" from replaying).
     const prevKey = JSON.stringify(this.engine.pairs);
@@ -234,6 +264,8 @@ export class FlowStore {
    *  Daily links resolve by their embedded date, so masked/warp/chain
    *  dailies (which URL params alone can't describe) load exactly. */
   daily(index = 1, dateStr: string = dailyLabel()): void {
+    this.stopClock();
+    this.saveDailyAttempt();
     const i = Math.min(Math.max(1, index), DAILY_COUNT);
     // Dailies are one-shot: a completed level can't be replayed. Send the
     // player back to the menu instead of loading the board again.
@@ -331,14 +363,16 @@ export class FlowStore {
   }
 
   packProgress(p: Pack): { done: number; total: number } {
-    // Cheap enough at these counts (=150 reads of tiny keys).
-    // progressVersion() is read so grids refresh after a win.
-    this.progressVersion();
+    const version = this.progressVersion();
+    const cached = this.progressCache.get(p.id);
+    if (cached?.version === version) return cached;
     let done = 0;
     for (let n = 1; n <= p.count; n++) {
       if (this.starsFor(p.id, n) > 0) done++;
     }
-    return { done, total: p.count };
+    const progress = { version, done, total: p.count };
+    this.progressCache.set(p.id, progress);
+    return progress;
   }
 
   private recordStars(p: Pack, level: number, stars: number): void {
@@ -493,16 +527,15 @@ export class FlowStore {
       byDate.get(parsed.date)?.add(parsed.index);
     }
     const full = (date: string): boolean => (byDate.get(date)?.size ?? 0) >= DAILY_COUNT;
-    const day = 86400000;
     const now = new Date();
     const at = (d: Date): string =>
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     let cursor = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    if (!full(at(cursor))) cursor = new Date(cursor.getTime() - day);
+    if (!full(at(cursor))) cursor.setDate(cursor.getDate() - 1);
     let streak = 0;
     while (full(at(cursor))) {
       streak++;
-      cursor = new Date(cursor.getTime() - day);
+      cursor.setDate(cursor.getDate() - 1);
     }
     return streak;
   }
@@ -516,9 +549,85 @@ export class FlowStore {
     this.stopClock();
     this.startTs = 0;
     this.elapsed = 0;
+    this.time.set('0:00');
     this.closeDialog();
+    this.restoreDailyAttempt();
     this.refresh();
     this.persistRoute();
+  }
+
+  /** Debounce live-drag writes; releases and page lifecycle events flush immediately. */
+  checkpointDaily(): void {
+    if (!this.isDaily() || this.checkpointTimer) return;
+    this.checkpointTimer = window.setTimeout(() => this.saveDailyAttempt(), 150);
+  }
+
+  private saveDailyAttempt(): void {
+    clearTimeout(this.checkpointTimer);
+    this.checkpointTimer = 0;
+    if (!this.isDaily() || this.engine.won) return;
+    const elapsed = this.timerId ? (Date.now() - this.startTs) / 1000 : this.elapsed;
+    try {
+      localStorage.setItem(`flow.attempt.${this.engine.seed}`, JSON.stringify({
+        version: 1,
+        board: JSON.stringify(this.engine.pairs),
+        state: this.engine.snapshot(),
+        history: this.engine.history,
+        elapsed,
+        savedAt: Date.now(),
+        running: !!this.timerId,
+      }));
+    } catch { /* Storage may be unavailable. The current game remains playable. */ }
+  }
+
+  private restoreDailyAttempt(): void {
+    if (!this.isDaily()) return;
+    try {
+      const raw = localStorage.getItem(`flow.attempt.${this.engine.seed}`);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (saved.version !== 1 || saved.board !== JSON.stringify(this.engine.pairs)
+        || !this.validSnapshot(saved.state) || !Array.isArray(saved.history)
+        || saved.history.length > 200 || !saved.history.every((s: unknown) => this.validSnapshot(s))
+        || !Number.isFinite(saved.elapsed) || saved.elapsed < 0
+        || !Number.isFinite(saved.savedAt)) return;
+      this.engine.restore(saved.state);
+      this.engine.history = saved.history;
+      this.engine.drainEvents();
+      this.elapsed = saved.elapsed + (saved.running ? Math.max(0, Date.now() - saved.savedAt) / 1000 : 0);
+      this.time.set(fmtT(this.elapsed));
+      if (saved.running) this.ensureClock();
+      this.engine.checkWin();
+    } catch { /* Ignore obsolete or damaged saved attempts. */ }
+  }
+
+  private validSnapshot(value: unknown): value is EngineSnapshot {
+    if (!value || typeof value !== 'object') return false;
+    const s = value as EngineSnapshot;
+    const e = this.engine;
+    if (!Number.isSafeInteger(s.moves) || s.moves < 0 || !Number.isSafeInteger(s.hints) || s.hints < 0
+      || !(s.lastCounted === null || (Number.isInteger(s.lastCounted) && s.lastCounted >= 0 && s.lastCounted < e.numPairs))
+      || !Array.isArray(s.paths) || s.paths.length !== e.numPairs) return false;
+    const seen = new Set<number>();
+    return s.paths.every((path, ci) => {
+      if (!Array.isArray(path) || path.length > e.topo.cells) return false;
+      return path.every((cell, i) => {
+        if (!Array.isArray(cell) || cell.length !== 2 || !cell.every(Number.isInteger)) return false;
+        const [r, c] = cell;
+        if (!e.inBounds(r, c)) return false;
+        const key = e.key(r, c);
+        const dot = e.epOf.get(key);
+        if (seen.has(key) || (dot !== undefined && (dot !== ci || (i !== 0 && i !== path.length - 1)))
+          || (i === 0 && dot !== ci)) return false;
+        if (i > 0) {
+          const prev = path[i - 1];
+          if (!e.topo.neighbors(prev[0], prev[1]).some(([rr, cc]) => rr === r && cc === c)
+            || e.edgeWalled(prev, cell)) return false;
+        }
+        seen.add(key);
+        return true;
+      });
+    });
   }
 
   // ---------- HUD sync ----------
@@ -555,6 +664,7 @@ export class FlowStore {
       this.subtitle.set(`${dims} \u00B7 ${sd}`);
     }
     if (e.won && e.win && !this.dialogRef) this.onWin();
+    this.saveDailyAttempt();
     this.renderTick.update((v) => v + 1);
   }
 
@@ -562,7 +672,7 @@ export class FlowStore {
 
   ensureClock(): void {
     if (this.startTs || this.engine.won) return;
-    this.startTs = Date.now();
+    this.startTs = Date.now() - this.elapsed * 1000;
     this.stopClock();
     this.timerId = window.setInterval(() => {
       this.elapsed = (Date.now() - this.startTs) / 1000;
@@ -571,6 +681,7 @@ export class FlowStore {
   }
 
   private stopClock(): void {
+    if (this.timerId) this.elapsed = (Date.now() - this.startTs) / 1000;
     if (this.timerId) clearInterval(this.timerId);
     this.timerId = 0;
   }
@@ -589,6 +700,7 @@ export class FlowStore {
   // ---------- actions (from board / buttons) ----------
 
   undo(): void {
+    if (this.isDaily() && (this.engine.won || this.dailyFinished())) return;
     if (!this.engine.undo()) {
       this.toast('Nothing to undo');
       return;
@@ -604,6 +716,11 @@ export class FlowStore {
     return parseDailySeed(this.engine.seed) !== null;
   }
 
+  private dailyFinished(): boolean {
+    const daily = this.parseDaily();
+    return !!daily && this.dailyDoneOn(daily.date).includes(daily.index);
+  }
+
   reset(): void {
     if (this.isDaily()) {
       this.toast('No resets on dailies');
@@ -616,6 +733,7 @@ export class FlowStore {
   }
 
   hint(): void {
+    if (this.isDaily() && this.dailyFinished()) return;
     const ci = this.engine.hint();
     if (ci < 0) return;
     this.ensureClock();
@@ -644,7 +762,7 @@ export class FlowStore {
           return;
         }
       }
-      this.loadSeed(e.seed, e.size, e.topo.kind);
+      this.loadSeed(e.seed, e.size, e.topo.kind, e.rows, e.cols, e.warp, e.chain);
       this.sound.click();
     }
   }
@@ -697,8 +815,13 @@ export class FlowStore {
   // ---------- win ----------
 
   private onWin(): void {
+    // Another tab may already have committed this one-shot daily.
+    if (this.dailyFinished()) {
+      this.showDailies();
+      return;
+    }
     this.stopClock();
-    const secs = this.startTs ? (Date.now() - this.startTs) / 1000 : 0;
+    const secs = this.elapsed;
     this.time.set(fmtT(secs));
     const win = this.engine.win;
     if (!win) return;
@@ -709,6 +832,9 @@ export class FlowStore {
     else {
       this.recordDaily(this.engine.seed);
       if (parsedDaily) this.saveDailyStars(parsedDaily.date, parsedDaily.index, win.stars);
+    }
+    if (parsedDaily) {
+      try { localStorage.removeItem(`flow.attempt.${this.engine.seed}`); } catch { /* ignore */ }
     }
     // Share card only makes sense once the full set of 5 dailies is done.
     // recordDaily() ran above, so the just-finished puzzle is already counted.
@@ -728,7 +854,7 @@ export class FlowStore {
       showReplay: parsedDaily ? false : true,
       onReplay: () => this.replay(),
       onNext: () => this.next(),
-      onShare: () => void this.shareToday(),
+      onShare: () => void this.shareToday(parsedDaily?.date),
     };
     // Stable describedby id (see template span): brain skips its live DOM
     // sync when ariaDescribedBy is preset, so the container binding never
@@ -757,7 +883,15 @@ export class FlowStore {
 
   private bestKey(): string {
     const e = this.engine;
-    return `flow.best.${e.seed}.s${e.rows}x${e.cols}`;
+    return this.bestKeyFor(e.seed, e.rows, e.cols);
+  }
+
+  private bestKeyFor(seed: string, rows: number, cols: number): string {
+    const e = this.engine;
+    // Daily geometry is canonical. Preserve existing daily and classic keys.
+    const variant = parseDailySeed(seed) || (e.topo.kind === 'square' && !e.warp && !e.chain)
+      ? '' : `.${e.topo.kind}.w${Number(e.warp)}.c${Number(e.chain)}`;
+    return `flow.best.${seed}.s${rows}x${cols}${variant}`;
   }
 
   private loadBest(): Best | null {
@@ -766,7 +900,7 @@ export class FlowStore {
 
   private loadBestFor(seed: string, rows: number, cols: number): Best | null {
     try {
-      const raw = localStorage.getItem(`flow.best.${seed}.s${rows}x${cols}`);
+      const raw = localStorage.getItem(this.bestKeyFor(seed, rows, cols));
       return raw ? (JSON.parse(raw) as Best) : null;
     } catch {
       return null;

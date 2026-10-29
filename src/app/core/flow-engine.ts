@@ -144,8 +144,11 @@ export class FlowEngine {
     }
     // Rectangular square boards pass explicit rows/cols; hex boards always
     // receive both from the caller. Default to `size x size`.
-    this.rows = rows > 0 ? rows : this.size;
-    this.cols = cols > 0 ? cols : this.size;
+    const dimension = (value: number, min: number, fallback: number): number =>
+      Number.isFinite(value) ? Math.min(12, Math.max(min, Math.trunc(value))) : fallback;
+    this.size = dimension(this.size, 5, 7);
+    this.rows = dimension(rows || this.size, 4, this.size);
+    this.cols = dimension(cols || this.size, 4, this.size);
     this.mask = kind === 'square' && mask ? mask : undefined;
     this.walls = kind === 'square' && this.mask && walls ? walls : undefined;
     this.warp = kind === 'square' && !!warp && !mask && this.rows > 2 && this.cols > 2;
@@ -168,9 +171,7 @@ export class FlowEngine {
     const opts = { kind, rows: this.rows, cols: this.cols, mask: this.mask, walls: this.walls, warp: this.warp };
 
     let lv: GeneratedLevel | null = null;
-    let lvSalt = this.seed;
     let fallback: GeneratedLevel | null = null;
-    let fallbackSalt = this.seed;
     for (let t = 0; t < 6 && !lv; t++) {
       const salt = t === 0 ? this.seed : `${this.seed}#${t}`;
       try {
@@ -178,12 +179,10 @@ export class FlowEngine {
         if (!validateLevel(cand, this.topo).ok) continue;
         if (!this.chain || flowChainPath(cand.pairs, this.topo) !== null) {
           lv = cand;
-          lvSalt = salt;
         } else if (!fallback) {
           // Valid but not one-stroke chainable: keep as a last resort so a
           // chain board still loads (partial chains keep working).
           fallback = cand;
-          fallbackSalt = salt;
         }
       } catch {
         // Seed-specific carve failure: keep any previous candidate and try
@@ -192,7 +191,6 @@ export class FlowEngine {
     }
     lv = lv ?? fallback;
     if (!lv) throw new Error(`level generation failed for seed ${JSON.stringify(this.seed)}`);
-    this.seed = lvSalt;
     this.pairs = lv.pairs;
     this.solution = lv.solution;
     // Carved (hex) boards can land a different pair count than requested;
@@ -363,7 +361,7 @@ export class FlowEngine {
 
   /** Pointer pressed on a cell. Returns 'stroke' when a stroke started. */
   pointerDown(r: number, c: number, pid: number): 'stroke' | 'none' {
-    if (this.won || !this.inBounds(r, c)) return 'none';
+    if (this.won || this.active || !this.inBounds(r, c)) return 'none';
     const k = this.key(r, c);
     const epColor = this.epOf.get(k);
     if (epColor !== undefined) {
@@ -592,14 +590,15 @@ export class FlowEngine {
   undo(): boolean {
     const snap = this.history.pop();
     if (!snap) return false;
+    const moves = this.moves;
+    const hints = this.hints;
     this.restore(snap);
-    this.moves = snap.moves + 1;
-    this.rebuild();
+    this.moves = moves;
+    this.hints = hints;
+    this.lastCounted = null;
+    this.active = null;
     this.won = false;
     this.win = null;
-    // A restored board may not match a live stroke's handoff trail; drop it
-    // so stale entries can never un-handoff across the restored state.
-    if (this.active) this.active.trail = [];
     return true;
   }
 
@@ -609,6 +608,7 @@ export class FlowEngine {
     this.paths = this.pairs.map(() => []);
     this.moves = 0;
     this.lastCounted = null;
+    this.active = null;
     this.won = false;
     this.win = null;
     this.rebuild();
@@ -616,16 +616,20 @@ export class FlowEngine {
   }
 
   clearColor(ci: number): boolean {
+    if (this.won) return false;
     if (this.paths[ci].length === 0) return false;
     this.pushHistory();
     this.paths[ci] = [];
     this.moves++;
+    this.lastCounted = null;
+    this.active = null;
     this.rebuild();
     return true;
   }
 
   /** Reveal the longest unconnected flow (cuts conflicting pipes). */
   hint(): number {
+    if (this.won) return -1;
     const open = this.done.map((d, i) => (d ? -1 : i)).filter((i) => i >= 0);
     if (!open.length) return -1;
     open.sort((a, b) => this.solution[b].length - this.solution[a].length);
@@ -640,6 +644,8 @@ export class FlowEngine {
     });
     this.paths[ci] = want.map((cell) => cell.slice() as Cell);
     this.hints++;
+    this.lastCounted = null;
+    this.active = null;
     this.rebuild();
     this.checkWin();
     return ci;

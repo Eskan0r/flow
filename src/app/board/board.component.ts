@@ -42,6 +42,7 @@ function hexA(hex: string, alpha: number): string {
         (pointermove)="onMove($event)"
         (pointerup)="onUp($event)"
         (pointercancel)="onCancel($event)"
+        (lostpointercapture)="onCancel($event)"
         (contextmenu)="onMenu($event)"
       ></canvas>
     </div>
@@ -124,8 +125,10 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
     const dpr = Math.min(2.5, window.devicePixelRatio || 1);
     canvas.style.width = `${w}px`;
     canvas.style.height = `${h}px`;
-    canvas.width = Math.round(w * dpr);
-    canvas.height = Math.round(h * dpr);
+    const pixelW = Math.round(w * dpr);
+    const pixelH = Math.round(h * dpr);
+    if (canvas.width !== pixelW) canvas.width = pixelW;
+    if (canvas.height !== pixelH) canvas.height = pixelH;
     this.draw();
   }
 
@@ -657,7 +660,7 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
 
   onDown(ev: PointerEvent): void {
     const e = this.store.engine;
-    if (e.won) return;
+    if (e.won || e.active || ev.button !== 0) return;
     this.store.sound.unlock();
     const cell = this.evCell(ev);
     if (!cell) return;
@@ -671,6 +674,8 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
     this.zone.runOutsideAngular(() => {
       e.pointerDown(cell[0], cell[1], ev.pointerId);
     });
+    if (this.store.engine.active?.changed) this.store.ensureClock();
+    this.store.checkpointDaily();
     this.draw();
     if (ev.cancelable) ev.preventDefault();
   }
@@ -681,10 +686,12 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
     if (ev.cancelable) ev.preventDefault();
     const cell = this.evCell(ev, true);
     if (!cell) return;
+    if (cell[0] === e.active.last[0] && cell[1] === e.active.last[1]) return;
     this.zone.runOutsideAngular(() => {
       e.pointerMove(cell[0], cell[1], ev.pointerId);
     });
     if (e.active?.changed) this.store.ensureClock();
+    this.store.checkpointDaily();
     this.draw();
     // Live HUD while dragging (cheap signal writes, no CD cost in zoneless).
     this.store.moves.set(e.moves);
@@ -698,12 +705,13 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
     const changed = e.pointerUp(ev.pointerId);
     if (changed) this.store.ensureClock();
     this.store.refresh();
-    this.draw();
   }
 
   onCancel(ev: PointerEvent): void {
+    if (this.store.engine.active?.pid !== ev.pointerId) return;
     this.store.engine.cancelStroke(ev.pointerId);
-    this.draw();
+    this.store.engine.checkWin();
+    this.store.refresh();
   }
 
   onMenu(ev: Event): void {
@@ -712,10 +720,9 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
     if (!cell) return;
     const e = this.store.engine;
     const ci = e.grid[e.key(cell[0], cell[1])];
-    if (ci >= 0) {
-      e.clearColor(ci);
+    if (ci >= 0 && e.clearColor(ci)) {
+      this.store.ensureClock();
       this.store.refresh();
-      this.draw();
       this.store.sound.click();
     }
   }

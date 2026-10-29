@@ -82,7 +82,8 @@ Same seed + size = same puzzle. Share via URL (`?seed=…&size=…`, `?level=…
   pushing past the dot is refused, dragging back out keeps control to
   re-route the tail. Release finalizes the move.
 - Drag from the middle of a pipe to re-route. Right-click a pipe to clear.
-- Side rail (or bottom bar on phones): Undo (counts as a move) / Reset
+- Side rail (or bottom bar on phones): Undo (preserves moves already spent;
+  no extra move penalty or hint refund) / Reset
   (clears the board and zeroes moves; disabled on dailies) / Hint / New. Menu: sizes, seeds,
   levels, daily, sound. Keyboard: `U` `R` `H` `N`.
 - Moves collapse by color: consecutive strokes on the same color cost one
@@ -105,8 +106,16 @@ subdomain — there is no backend:
 - `flow.stars.<pack>.<level>` — best stars per pack level
 - `flow.daily.done` — completed daily labels (`YYYY-MM-DD-index`)
 - `flow.dstars.<date>-<index>` — best stars per daily
-- `flow.best.<seed>.s<size>` — best time + moves per puzzle
-- `flow.last` — last route, restored on reload
+- `flow.best.<seed>.s<rows>x<cols>` — best time + moves per puzzle;
+  hex, warp and chain variants have separate suffixes
+- `flow.attempt.<daily-seed>` — unfinished daily paths, moves, hints, undo
+  history and elapsed time; restored when that daily is opened again
+
+Daily attempts survive refresh, menu navigation and seed entry. Daily seeds
+always load their canonical board; settings cannot replace their geometry.
+The clock pauses in menus. Refreshing an active daily retains its elapsed
+time, including time since its last checkpoint. The current route lives in
+the URL; a bare visit opens the pack list.
 
 The streak counts consecutive days with all 5 dailies complete (ending
 today or yesterday), computed from the stored completion dates — no
