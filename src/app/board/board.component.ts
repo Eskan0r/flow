@@ -362,15 +362,14 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
       for (let j = -1; j <= 1; j++) {
         if (i === 0 && j === 0) continue;
         cc.save();
-        if (i !== 0 && j === 0) {
-          cc.beginPath();
-          cc.rect(i < 0 ? 0 : m.ox + bw, m.oy, m.ox, bh);
-          cc.clip();
-        } else if (i === 0 && j !== 0) {
-          cc.beginPath();
-          cc.rect(m.ox, j < 0 ? 0 : m.oy + bh, bw, m.oy);
-          cc.clip();
-        }
+        // Clip diagonal copies too: wrapped stroke stubs extend beyond
+        // their source tile and otherwise bleed into the adjacent bands,
+        // painting rounded caps and dark outlines over another copy.
+        const x = i < 0 ? 0 : i > 0 ? m.ox + bw : m.ox;
+        const y = j < 0 ? 0 : j > 0 ? m.oy + bh : m.oy;
+        cc.beginPath();
+        cc.rect(x, y, i === 0 ? bw : m.ox, j === 0 ? bh : m.oy);
+        cc.clip();
         cc.translate(i * bw, j * bh);
         drawFlows(cc);
         cc.restore();
