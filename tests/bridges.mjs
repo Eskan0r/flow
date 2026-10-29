@@ -4,6 +4,7 @@ import { FlowEngine } from '../src/app/core/flow-engine.ts';
 import { pathHasShortcut } from '../src/app/core/flow-rules.ts';
 import { rectTopology } from '../src/app/core/topology.ts';
 import { dailySpec, dailySeed } from '../src/app/core/packs.ts';
+import { auditSolutions } from '../src/app/core/solution-audit.ts';
 
 const same = (a, b) => a[0] === b[0] && a[1] === b[1];
 function draw(e, path, pid = 1) {
@@ -21,6 +22,8 @@ function crossing(e) {
 for (let n = 1; n <= 60; n++) {
   const level = bridgeLevel(n);
   assert.equal(validateBridgeLevel(level).ok, true, `valid board ${n}`);
+  assert.deepEqual(Object.fromEntries(Object.entries(auditSolutions(level)).filter(([key]) => key !== 'nodes')),
+    { complete: true, solutions: 1, padded: false }, `unique unpadded board ${n}`);
   assert.equal(level.bridges.length, n <= 20 ? 1 : n <= 40 ? 2 : n <= 50 ? 3 : 4);
   const topo = rectTopology(level.size, level.size), keys = new Set(level.bridges.map(b => topo.key(...b.cell)));
   for (const pair of level.pairs) assert.ok(topo.distance(...pair) > 1, `matching endpoints separated ${n}`);

@@ -121,7 +121,7 @@ export class FlowEngine {
   win: WinInfo | null = null;
   history: EngineSnapshot[] = [];
   active: ActiveStroke | null = null;
-  /** Sound-worthy happenings since last drain: 'complete:i' | 'cut' | 'blocked'. */
+  /** Happenings since last drain: 'complete:i' | 'cut' | 'blocked' | 'shortcut'. */
   events: string[] = [];
 
   drainEvents(): string[] {
@@ -621,6 +621,7 @@ export class FlowEngine {
     if (finish && !eq(s, finish)) proposed.push(finish);
     if (pathHasShortcut(proposed, this.topo, this.bridgeAt)) {
       this.events.push('blocked');
+      this.events.push('shortcut');
       return false;
     }
     const occ = this.occupantAt(r, c, lane);

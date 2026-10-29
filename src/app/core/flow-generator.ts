@@ -10,6 +10,7 @@ import { hexTopology, maskTopology, rectTopology } from './topology';
 import type { BoardKind, Mask, Topology, WarpGates } from './topology';
 import { carveLevel } from './carve';
 import { validateBridgeLevel, type Bridge } from './bridges';
+import { auditSolutions } from './solution-audit';
 
 export interface FlowLevel {
   seed: string;
@@ -405,6 +406,24 @@ export function scoreClean(info: CutInfo): number {
 export function generateLevel(
   seedString: string, size = 7, numPairs: number | null = null, opts: GenerateOptions = {},
 ): GeneratedLevel {
+  // A clean stored route is insufficient: the same endpoints can also
+  // admit a padded solution. Certify the entire puzzle before publishing it.
+  for (let attempt = 0; attempt < 48; attempt++) {
+    try {
+      const level = generateCandidate(attempt ? `${seedString}#unique${attempt}` : seedString, size, numPairs, opts);
+      if (!validateLevel(level).ok) continue;
+      const audit = auditSolutions(level);
+      if (!audit.complete || audit.padded || audit.solutions !== 1) continue;
+      level.seed = String(seedString);
+      return level;
+    } catch { /* Retry deterministically; never publish an uncertified board. */ }
+  }
+  throw new Error(`unique level generation failed for seed ${JSON.stringify(String(seedString))}`);
+}
+
+function generateCandidate(
+  seedString: string, size: number, numPairs: number | null, opts: GenerateOptions,
+): GeneratedLevel {
   if (!opts.warpGates) return generateAttempt(seedString, size, numPairs, opts);
   // Sparse passages constrain the Hamiltonian more strongly than open
   // edges. Retry deterministically, keeping the public seed stable.
@@ -506,7 +525,7 @@ function generateAttempt(
     },
   });
   let maskBestEffort: ReturnType<typeof mkLevel> | null = null;
-  if (kind === 'hex' || masked || topo.warpGates) {
+  if (kind === 'hex' || masked || topo.warp) {
     const salts: Array<{ salt: string; relax: boolean; restarts: number }> = [
       { salt: '', relax: false, restarts: 12 },
       { salt: '#c2', relax: false, restarts: 12 },

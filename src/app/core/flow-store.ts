@@ -601,11 +601,19 @@ export class FlowStore {
       if (!raw) return;
       const saved = JSON.parse(raw);
       const board = JSON.stringify(this.engine.bridges.length ? [this.engine.pairs, this.engine.bridges] : this.engine.pairs);
-      if (saved.version !== 1 || saved.board !== board
-        || !this.validSnapshot(saved.state) || !Array.isArray(saved.history)
-        || saved.history.length > 200 || !saved.history.every((s: unknown) => this.validSnapshot(s))
+      if (saved.version !== 1 || typeof saved.board !== 'string' || !saved.state || !Array.isArray(saved.history)
         || !Number.isFinite(saved.elapsed) || saved.elapsed < 0
         || !Number.isFinite(saved.savedAt)) return;
+      if (saved.board !== board) {
+        // A certified replacement has different dots. Drop obsolete geometry
+        // but retain all spent moves, hints and time on the daily attempt.
+        saved.state.paths = this.engine.paths.map(() => []);
+        saved.state.lastCounted = null;
+        saved.history = [];
+      }
+      if (!this.validSnapshot(saved.state)
+        || saved.history.length > 200 || !saved.history.every((s: unknown) => this.validSnapshot(s))
+      ) return;
       // Older clients allowed padded paths. Clear only those pipes while
       // retaining spent moves, hints and time; never bring them back by undo.
       const shortcut = (path: Cell[]) => pathHasShortcut(path, this.engine.topo, this.engine.bridgeAt);
@@ -664,11 +672,15 @@ export class FlowStore {
 
   /** Call after any engine mutation: sounds, HUD signals, win dialog. */
   refresh(): void {
-    for (const ev of this.engine.drainEvents()) {
+    const events = this.engine.drainEvents();
+    for (const ev of events) {
       if (ev === 'cut') this.sound.cut();
       else if (ev.startsWith('complete:')) this.sound.done();
       // NOTE: 'blocked' bumps stay silent by design (a burst of them fires
       // on release after dragging along walls/rival dots).
+    }
+    if (!this.engine.won && events.includes('shortcut')) {
+      this.toast('That detour adds unnecessary squares. Backtrack and turn earlier.');
     }
     const e = this.engine;
     this.moves.set(e.moves);

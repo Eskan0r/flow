@@ -250,6 +250,40 @@ describe('App', () => {
     expect(document.querySelector('[data-testid=reset-btn]')?.hasAttribute('disabled')).toBe(true);
   });
 
+  it('replaces the ambiguous daily 1 board and reaches the left column through real pointer input', async () => {
+    const { fixture, store } = await boot('/?seed=daily-2026-10-29-1');
+    fixture.detectChanges();
+    const e = store.engine, canvas = boardCanvas();
+    expect(e.pairs).not.toEqual([[[1, 1], [3, 4]], [[4, 4], [3, 1]], [[3, 2], [2, 0]], [[1, 0], [0, 4]]]);
+    for (const path of e.solution) {
+      for (let i = 0; i < path.length; i++) {
+        pointer(canvas, i ? 'pointermove' : 'pointerdown', ...cellXY(...path[i], 5));
+      }
+      pointer(canvas, 'pointerup', ...cellXY(...path.at(-1)!, 5));
+    }
+    expect(e.won).toBe(true);
+    expect(e.filledPct()).toBe(100);
+    expect(e.paths.every(path => !pathHasShortcut(path, e.topo, e.bridgeAt))).toBe(true);
+    expect(e.paths.some(path => path.some(([r, c]) => r === 4 && c === 0))).toBe(true);
+  });
+
+  it('retains daily costs when certification replaces a saved board', async () => {
+    const { store } = await boot('/?seed=daily-2026-10-29-1');
+    localStorage.setItem('flow.attempt.daily-2026-10-29-1', JSON.stringify({
+      version: 1, board: JSON.stringify([[[1, 1], [3, 4]], [[4, 4], [3, 1]], [[3, 2], [2, 0]], [[1, 0], [0, 4]]]),
+      state: { paths: [[[1, 1]], [[4, 4], [4, 3], [4, 2], [4, 1]], [], []], moves: 7, hints: 2, lastCounted: 1 },
+      history: [], elapsed: 65, savedAt: Date.now(), running: false,
+    }));
+    const reloaded = TestBed.runInInjectionContext(() => new FlowStore());
+    reloaded.boot();
+    expect(reloaded.engine.seed).toBe(store.engine.seed);
+    expect(reloaded.engine.paths.every(path => !path.length)).toBe(true);
+    expect(reloaded.engine.moves).toBe(7);
+    expect(reloaded.engine.hints).toBe(2);
+    expect(reloaded.time()).toBe('1:05');
+    expect(reloaded.engine.undo()).toBe(false);
+  });
+
   it('reload resumes daily paths, move costs, hints and undo history', async () => {
     const { store } = await boot('/?seed=daily-2026-09-26-1');
     const e = store.engine;

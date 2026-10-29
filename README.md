@@ -155,6 +155,12 @@ subdomain — there is no backend:
 
 Daily attempts survive refresh, menu navigation and seed entry. Daily seeds
 always load their canonical board; settings cannot replace their geometry.
+Generation certifies exactly one full-coverage solution, including a search
+for alternate padded routes that the drawing rules would reject. Candidates
+with alternate solutions or an inconclusive search are retried deterministically.
+The same certification applies to the precomputed bridge bank. If a corrected
+daily changes its dots, obsolete paths are cleared while spent moves, hints
+and elapsed time remain.
 The clock pauses in menus. Refreshing an active daily retains its elapsed
 time, including time since its last checkpoint. The current route lives in
 the URL; a bare visit opens the pack list.

@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import { seededRng } from '../src/app/core/flow-generator.ts';
 import { validateBridgeLevel } from '../src/app/core/bridges.ts';
+import { auditSolutions } from '../src/app/core/solution-audit.ts';
 
 function generate(n) {
   const size = n <= 20 ? 5 : n <= 40 ? 6 : 7;
@@ -74,8 +75,17 @@ function generate(n) {
     const lengths = paths.map(p => p.length), target = size - 1;
     const score = -Math.abs(paths.length - target) * 8 - (Math.max(...lengths) - Math.min(...lengths));
     if (score <= bestScore) continue;
+    const candidate = { size, bridges: positions.map((p, i) => [p[0] * size + p[1], (n + i) % 2 ? 'h' : 'v']), paths: paths.map(p => p.map(physical)) };
+    const cell = k => [Math.floor(k / size), k % size];
+    const solution = candidate.paths.map(p => p.map(cell));
+    const audit = auditSolutions({
+      seed: `flow-bridges-${n}`, size, numPairs: solution.length, solution,
+      pairs: solution.map(p => [p[0], p.at(-1)]),
+      bridges: candidate.bridges.map(([k, over]) => ({ cell: cell(k), over })),
+    });
+    if (!audit.complete || audit.padded || audit.solutions !== 1) continue;
     bestScore = score;
-    best = { size, bridges: positions.map((p, i) => [p[0] * size + p[1], (n + i) % 2 ? 'h' : 'v']), paths: paths.map(p => p.map(physical)) };
+    best = candidate;
   }
   if (!best) throw new Error(`Could not generate bridge level ${n}`);
   return best;
