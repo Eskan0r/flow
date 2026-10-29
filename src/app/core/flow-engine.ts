@@ -5,7 +5,7 @@
 import { defaultHexPairs, defaultPairsForSize, flowChainPath, generateLevel, validateLevel } from './flow-generator';
 import type { Cell, GeneratedLevel } from './flow-generator';
 import { hexTopology, maskTopology, rectTopology, squareTopology } from './topology';
-import type { BoardKind, Mask, Topology } from './topology';
+import type { BoardKind, Mask, Topology, WarpGates } from './topology';
 
 export type PlayMode = 'level' | 'seed';
 
@@ -132,7 +132,7 @@ export class FlowEngine {
     return this.topo.inBounds(r, c);
   }
 
-  loadLevel(mode: PlayMode, levelNum = 1, seed = '', size = 7, kind: BoardKind = 'square', rows = 0, cols = 0, mask: Mask | null = null, walls: Mask | null = null, warp = false, chain = false, pairCount: number | null = null): void {
+  loadLevel(mode: PlayMode, levelNum = 1, seed = '', size = 7, kind: BoardKind = 'square', rows = 0, cols = 0, mask: Mask | null = null, walls: Mask | null = null, warp = false, chain = false, pairCount: number | null = null, warpGates?: WarpGates): void {
     this.mode = mode;
     if (mode === 'level') {
       this.levelNum = levelNum;
@@ -157,7 +157,8 @@ export class FlowEngine {
       ? hexTopology(this.rows, this.cols)
       : this.mask
         ? maskTopology(this.rows, this.cols, this.mask, this.walls)
-        : rectTopology(this.rows, this.cols, this.warp);
+        : rectTopology(this.rows, this.cols, this.warp, warpGates);
+    this.warp = !!this.topo.warp;
     // Masked shapes pick their own density inside generateLevel (pass null).
     // Packs may pin the pair count per level (density rotation); customs
     // and dailies use the size default.
@@ -168,7 +169,7 @@ export class FlowEngine {
           ? null
           : defaultPairsForSize(Math.max(this.rows, this.cols)));
     this.numPairs = genPairs ?? defaultPairsForSize(Math.max(this.rows, this.cols));
-    const opts = { kind, rows: this.rows, cols: this.cols, mask: this.mask, walls: this.walls, warp: this.warp };
+    const opts = { kind, rows: this.rows, cols: this.cols, mask: this.mask, walls: this.walls, warp: this.warp, warpGates: this.topo.warpGates };
 
     let lv: GeneratedLevel | null = null;
     let fallback: GeneratedLevel | null = null;

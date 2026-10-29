@@ -1,7 +1,7 @@
 /* Level packs, Flow-Free style: named packs with fixed level counts, size
  * schedules, and seed namespaces. Framework-free (tested by plain node). */
 
-import type { BoardKind, Mask } from './topology';
+import type { BoardKind, Mask, WarpGates } from './topology';
 import { defaultPairsForSize } from './flow-generator';
 
 export interface Pack {
@@ -20,6 +20,7 @@ export interface Pack {
   wallsForLevel?(n: number): Mask;
   /** True when the level wraps around its edges (square boards only). */
   warpForLevel?(n: number): boolean;
+  warpGatesForLevel?(n: number): WarpGates | undefined;
   /** True when completing a flow hands the live stroke to a touching dot. */
   chainForLevel?(n: number): boolean;
   /** Pair count override (rotates density within a size band so same-size
@@ -50,6 +51,20 @@ function rotatedPairs(sizeForLevel: (n: number) => number): (n: number) => numbe
 /** A square/hex pack: shape always mirrors the nominal size. */
 function uniformPack(base: Omit<Pack, 'shapeForLevel'>): Pack {
   return { ...base, shapeForLevel: (n) => squareShape(n, base.sizeForLevel) };
+}
+
+/** One horizontal passage, then vertical/mixed passages, then open edges. */
+export function warpGatesForLevel(n: number): WarpGates | undefined {
+  if (n > 40) return undefined;
+  if (n <= 20) return { rows: [[2, 1, 3][Math.floor((n - 1) / 5) % 3]], cols: [] };
+  const offset = (n - 21) % 5;
+  const rowOrder = [2, 4, 1, 3, 0, 5];
+  const colOrder = [3, 1, 4, 2, 5, 0];
+  const select = (order: number[], count: number) =>
+    Array.from({ length: count }, (_, i) => order[(i + offset) % order.length]).sort((a, b) => a - b);
+  if (n <= 25) return { rows: [], cols: select(colOrder, 1) };
+  const count = n <= 30 ? 1 : n <= 35 ? 2 : 3;
+  return { rows: select(rowOrder, count), cols: select(colOrder, count) };
 }
 
 // ---- polyomino shapes (bounding box is 7x7 unless noted) ----
@@ -183,14 +198,15 @@ export const PACKS: Pack[] = [
   uniformPack({
     id: 'warps',
     name: 'Warps',
-    desc: 'Edges wrap around, 5x5 to 7x7',
+    desc: 'Single passages to fully wrapped edges',
     color: '#7c3aed',
     kind: 'square',
     count: 60,
     sizeForLevel: (n) => band(n, [[20, 5], [40, 6], [60, 7]]),
     pairsForLevel: rotatedPairs((n) => band(n, [[20, 5], [40, 6], [60, 7]])),
-    seedForLevel: (n) => `flow-warps-${n}`,
+    seedForLevel: (n) => n <= 40 ? `flow-warps-gated-${n}` : `flow-warps-${n}`,
     warpForLevel: () => true,
+    warpGatesForLevel,
   }),
   uniformPack({
     id: 'chains',
@@ -233,6 +249,7 @@ export interface DailySpec {
   mask?: Mask;
   walls?: Mask;
   warp?: boolean;
+  warpGates?: WarpGates;
   chain?: boolean;
   /** Menu tag: 'Warp' | 'Chain' | 'Rect' | 'Odd' | 'Walls' | 'Hex' | ''. */
   tag: string;
@@ -244,6 +261,28 @@ const DAILY_EASY: DailyCat[] = ['square', 'hex', 'chains', 'rect'];
 const DAILY_MID: DailyCat[] = [...DAILY_EASY, 'odd', 'walls'];
 const DAILY_HARD: DailyCat[] = [...DAILY_MID, 'warps'];
 
+// Preserve already-published boards and unfinished attempts. Starting with
+// tomorrow's set, about one day in ten gets one warp in a hard slot (~2%
+// of all dailies). Only one in twenty of those uses fully open edges.
+export const DAILY_WARP_ROTATION_START = '2026-10-30';
+
+function dailyRoll(key: string): number {
+  let h = hashStr(key);
+  h = Math.imul(h ^ (h >>> 16), 0x7feb352d);
+  h = Math.imul(h ^ (h >>> 15), 0x846ca68b);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+function dailyWarpGates(date: string, size: number): WarpGates {
+  const mode = dailyRoll(`${date}:warp-axis`) % 3;
+  const count = 1 + dailyRoll(`${date}:warp-count`) % 2;
+  const pick = (axis: string) => {
+    const start = dailyRoll(`${date}:${axis}`) % (size - 2);
+    return Array.from({ length: count }, (_, i) => 1 + (start + i * 2) % (size - 2)).sort((a, b) => a - b);
+  };
+  return { rows: mode === 1 ? [] : pick('warp-row'), cols: mode === 0 ? [] : pick('warp-col') };
+}
+
 /** Full board spec for one of a date's five dailies. Deterministic per
  *  (date, index) so every client plays the same boards; the seed stays
  *  `daily-YYYY-MM-DD-i` regardless of category. */
@@ -252,7 +291,15 @@ export function dailySpec(dateStr: string, index: number): DailySpec {
   const size = DAILY_SIZES[i - 1];
   const pool = i <= 2 ? DAILY_EASY : i === 3 ? DAILY_MID : DAILY_HARD;
   const h = hashStr(`${dateStr}:${i}`);
-  switch (pool[h % pool.length]) {
+  const rareWarps = dateStr >= DAILY_WARP_ROTATION_START;
+  let category = pool[h % pool.length];
+  if (rareWarps && i >= 4) {
+    category = DAILY_MID[h % DAILY_MID.length];
+    if (dailyRoll(`${dateStr}:warp-day`) % 10 === 0 && i === 4 + dailyRoll(`${dateStr}:warp-slot`) % 2) {
+      category = 'warps';
+    }
+  }
+  switch (category) {
     case 'hex':
       return { kind: 'hex', rows: size, cols: size, tag: 'Hex' };
     case 'chains':
@@ -268,7 +315,10 @@ export function dailySpec(dateStr: string, index: number): DailySpec {
       return { kind: 'square', rows: size, cols: size, mask: (r, c) => !w(r, c), walls: w, tag: 'Walls' };
     }
     case 'warps':
-      return { kind: 'square', rows: size, cols: size, warp: true, tag: 'Warp' };
+      if (rareWarps && dailyRoll(`${dateStr}:full-warp`) % 20 !== 0) {
+        return { kind: 'square', rows: size, cols: size, warp: true, warpGates: dailyWarpGates(dateStr, size), tag: 'Warp' };
+      }
+      return { kind: 'square', rows: size, cols: size, warp: true, tag: rareWarps ? 'Full Warp' : 'Warp' };
     default:
       return { kind: 'square', rows: size, cols: size, tag: '' };
   }

@@ -60,6 +60,18 @@ hint / new / seed / daily / right-click clear. Stable selectors live on
 
 ## How levels work
 
+The Warps pack introduces one left/right passage in levels 1–20, one
+top/bottom passage in 21–25, one passage on each axis in 26–30, two on each
+axis in 31–35, and three on each axis in 36–40. Levels 41–60 have fully
+wrapped edges. Solid border segments are walls; glowing dashed segments
+are warp passages. Every introductory solution uses its available warp
+axis (both axes on mixed boards).
+
+Starting October 30, 2026, about 2% of daily puzzles are warps, only in
+slots 4–5 and at most once a day. Most use one or two passages per active
+axis; roughly 5% of those warp dailies have fully wrapped edges (about
+0.1% of all dailies). Earlier daily boards keep their published rules.
+
 `src/app/core/flow-generator.ts` (framework-free, also exercised by `npm test`):
 
 1. Hamiltonian **snake** covers the board.

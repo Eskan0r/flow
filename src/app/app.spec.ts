@@ -2,8 +2,10 @@
  * through real pointer events to a win with the dialog. Run: ng test */
 import { ApplicationRef } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import { describe, expect, it, vi } from 'vitest';
 import { App } from './app';
+import { BoardComponent } from './board/board.component';
 import type { FlowEngine } from './core/flow-engine';
 import type { Cell } from './core/flow-generator';
 import { FlowStore } from './core/flow-store';
@@ -57,6 +59,33 @@ describe('App', () => {
     for (const p of PACKS) {
       expect(document.body.textContent).toContain(p.name);
     }
+  });
+
+  it('loads the introductory warp route and only accepts outside input at its passage', async () => {
+    const { fixture, store } = await boot('/?pack=warps&level=1');
+    const canvas = boardCanvas();
+    const board = fixture.debugElement.query(By.directive(BoardComponent)).componentInstance as {
+      evCell(ev: PointerEvent, wrap: boolean): Cell | null;
+    };
+    expect(store.engine.topo.warpGates).toEqual({ rows: [2], cols: [] });
+    const ev = (x: number, y: number) => ({ clientX: x, clientY: y } as PointerEvent);
+    expect(board.evCell(ev(0, 200), true)).toEqual([2, 4]);
+    expect(board.evCell(ev(400, 200), true)).toEqual([2, 0]);
+    expect(board.evCell(ev(0, 400 / 3), true)).toBeNull();
+    expect(board.evCell(ev(200, 0), true)).toBeNull();
+    expect(board.evCell(ev(0, 0), true)).toBeNull();
+    expect(canvas).toBeTruthy();
+    store.replay();
+    expect(store.engine.topo.warpGates).toEqual({ rows: [2], cols: [] });
+  });
+
+  it('loads selective and fully wrapped daily links with their canonical rules', async () => {
+    const { store } = await boot('/?seed=daily-2027-01-02-5&size=5&kind=hex');
+    expect(store.engine.rows).toBe(8);
+    expect(store.engine.topo.warpGates).toEqual({ rows: [], cols: [3, 5] });
+    store.daily(5, '2027-06-07');
+    expect(store.engine.warp).toBe(true);
+    expect(store.engine.topo.warpGates).toBeUndefined();
   });
 
   it('new levels actually replace the board state', async () => {

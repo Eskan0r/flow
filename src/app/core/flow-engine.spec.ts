@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Cell } from './flow-generator';
 import { FlowEngine } from './flow-engine';
+import { PACKS } from './packs';
 
 function drawPath(e: FlowEngine, cells: Cell[], pid = 1): boolean {
   e.pointerDown(cells[0][0], cells[0][1], pid);
@@ -10,6 +11,24 @@ function drawPath(e: FlowEngine, cells: Cell[], pid = 1): boolean {
 }
 
 describe('FlowEngine', () => {
+  it('plays every gated warp board to a perfect win and rejects closed seams', () => {
+    const pack = PACKS.find(p => p.id === 'warps')!;
+    for (let n = 1; n <= 40; n++) {
+      const e = new FlowEngine();
+      const size = pack.sizeForLevel(n);
+      e.loadLevel('seed', 0, pack.seedForLevel(n), size, 'square', size, size, null, null, true, false,
+        pack.pairsForLevel!(n), pack.warpGatesForLevel!(n));
+      const gates = e.topo.warpGates!;
+      // Pick a closed edge, then ask applyStep to cross it directly.
+      const row = Array.from({ length: size }, (_, r) => r).find(r => !gates.rows.includes(r))!;
+      e.startStroke(0, [row, 0], 1);
+      expect(e.applyStep(0, [row, size - 1])).toBe(false);
+      e.reset();
+      e.solution.forEach(path => drawPath(e, path));
+      expect(e.won, `warp level ${n}`).toBe(true);
+      expect(e.win?.perfect, `warp level ${n}`).toBe(true);
+    }
+  });
   it('wins by drawing every solution path with a perfect score', () => {
     const e = new FlowEngine();
     e.loadLevel('level', 3);

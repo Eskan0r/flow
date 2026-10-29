@@ -7,7 +7,7 @@
 export type Cell = [number, number];
 
 import { hexTopology, maskTopology, rectTopology } from './topology';
-import type { BoardKind, Mask, Topology } from './topology';
+import type { BoardKind, Mask, Topology, WarpGates } from './topology';
 import { carveLevel } from './carve';
 
 export interface FlowLevel {
@@ -25,6 +25,7 @@ export interface FlowLevel {
   walls?: Mask;
   /** Toroidal edges (square boards only). */
   warp?: boolean;
+  warpGates?: WarpGates;
 }
 
 export interface LevelStats {
@@ -201,6 +202,10 @@ export function analyzeCut(path: Cell[], topo: Topology, lens: number[]): CutInf
       for (let c = 0; c < cMax; c++) {
         const r1 = (r + 1) % rows;
         const c1 = (c + 1) % cols;
+        if (topo.warpGates && (
+          (r1 === 0 && (!topo.warpGates.cols.includes(c) || !topo.warpGates.cols.includes(c1))) ||
+          (c1 === 0 && (!topo.warpGates.rows.includes(r) || !topo.warpGates.rows.includes(r1)))
+        )) continue;
         const a = segGrid[r][c];
         if (a !== -1 && a === segGrid[r1][c] && a === segGrid[r][c1] && a === segGrid[r1][c1]) mono2x2++;
       }
@@ -375,6 +380,7 @@ export interface GenerateOptions {
   walls?: Mask;
   /** Toroidal edges (square boards only). */
   warp?: boolean;
+  warpGates?: WarpGates;
 }
 
 interface Candidate {
@@ -396,6 +402,26 @@ export function scoreClean(info: CutInfo): number {
 
 export function generateLevel(
   seedString: string, size = 7, numPairs: number | null = null, opts: GenerateOptions = {},
+): GeneratedLevel {
+  if (!opts.warpGates) return generateAttempt(seedString, size, numPairs, opts);
+  // Sparse passages constrain the Hamiltonian more strongly than open
+  // edges. Retry deterministically, keeping the public seed stable.
+  let fallback: GeneratedLevel | null = null;
+  for (let attempt = 0; attempt < 12; attempt++) {
+    try {
+      const level = generateAttempt(attempt ? `${seedString}#g${attempt}` : seedString, size, numPairs, opts);
+      if (!validateLevel(level).ok) continue;
+      level.seed = String(seedString);
+      if (level.stats.tier !== 'dirty') return level;
+      fallback ??= level;
+    } catch { /* Try the next deterministic candidate. */ }
+  }
+  if (fallback) return fallback;
+  throw new Error(`gated warp generation failed for seed ${JSON.stringify(String(seedString))}`);
+}
+
+function generateAttempt(
+  seedString: string, size: number, numPairs: number | null, opts: GenerateOptions,
 ): GeneratedLevel {
   const t0 = Date.now();
   if (size < 5) size = 5;
@@ -419,12 +445,12 @@ export function generateLevel(
     ? seededRng(`${String(seedString)}::hex:${rows}x${cols}:${K}`)
     : masked
       ? seededRng(`${String(seedString)}::mask:${rows}x${cols}:${K}`)
-      : seededRng(`${String(seedString)}::${rows}x${cols}:${K}${opts.warp ? ':warp' : ''}`);
+      : seededRng(`${String(seedString)}::${rows}x${cols}:${K}${opts.warp ? ':warp' : ''}${opts.warpGates ? `:${JSON.stringify(opts.warpGates)}` : ''}`);
   const topo: Topology = kind === 'hex'
     ? hexTopology(rows, cols)
     : masked
       ? maskTopology(rows, cols, opts.mask as Mask, opts.walls)
-      : rectTopology(rows, cols, opts.warp);
+      : rectTopology(rows, cols, opts.warp, opts.warpGates);
   const total = topo.total;
   const maxPaths = opts.maxPaths ?? 70;
   // Excellent boards stop the search early, but only after a fixed minimum
@@ -438,6 +464,20 @@ export function generateLevel(
   // drops the straight-count cap (but never the border veto or validity).
   // Thin/non-convex masks need a deeper carve search than hex.
   const tuning = masked ? { triesPerFlow: 30, pathBudget: 1500 } : {};
+  // A stored teaching solution demonstrates every available warp axis.
+  const usesGates = (path: Cell[], lens: number[]): boolean => {
+    const gates = topo.warpGates;
+    if (!gates) return true;
+    let horizontal = false, vertical = false, start = 0;
+    for (const len of lens) {
+      for (let k = start + 1; k < start + len; k++) {
+        horizontal ||= Math.abs(path[k][1] - path[k - 1][1]) > 1;
+        vertical ||= Math.abs(path[k][0] - path[k - 1][0]) > 1;
+      }
+      start += len;
+    }
+    return (gates.rows.length === 0 || horizontal) && (gates.cols.length === 0 || vertical);
+  };
   const mkLevel = (carved: NonNullable<ReturnType<typeof carveLevel>>, info: ReturnType<typeof analyzeCut>, tier: 'clean' | 'relaxed' | 'dirty') => ({
     seed: String(seedString),
     size,
@@ -448,6 +488,7 @@ export function generateLevel(
     mask: topo.mask,
     walls: topo.walls,
     warp: topo.warp,
+    warpGates: topo.warpGates,
     pairs: carved.pairs,
     solution: carved.solution,
     stats: {
@@ -463,7 +504,7 @@ export function generateLevel(
     },
   });
   let maskBestEffort: ReturnType<typeof mkLevel> | null = null;
-  if (kind === 'hex' || masked) {
+  if (kind === 'hex' || masked || topo.warpGates) {
     const salts: Array<{ salt: string; relax: boolean; restarts: number }> = [
       { salt: '', relax: false, restarts: 12 },
       { salt: '#c2', relax: false, restarts: 12 },
@@ -481,12 +522,14 @@ export function generateLevel(
         ...tuning,
       });
       if (!carved) continue;
+      if (!usesGates(carved.solution.flat(), carved.solution.map(p => p.length))) continue;
       const info = analyzeCut(
         carved.solution.flat(),
         topo,
         carved.solution.map((sg) => sg.length),
       );
       if (info.touches !== 0 || info.mono2x2 !== 0) continue;
+      if (topo.warpGates && info.straights <= 3) return mkLevel(carved, info, 'clean');
       if (masked && !maskBestEffort) maskBestEffort = mkLevel(carved, info, 'relaxed');
       if (a.relax) {
         if (info.borderStraight > 0 || info.straights > 3) continue;
@@ -535,6 +578,9 @@ export function generateLevel(
   }
 
   const { minLen, maxLen } = lengthBounds(Math.max(rows, cols), K, total);
+  // Introductory warp boards can have simple straight flows against the
+  // closed walls; the new passage itself supplies the teaching challenge.
+  const straightLimit = topo.warpGates ? 3 : 1;
 
   const cleanPool: Candidate[] = [];
   const relaxedPool: Candidate[] = [];
@@ -556,12 +602,13 @@ export function generateLevel(
   for (let p = 0; p < maxPaths; p++) {
     const path = buildSnake(rows, cols);
     backbite(path, topo, rng, Math.floor(total * (0.3 + rng() * 0.6)));
-    const lens = findCleanPartition(path, topo, K, minLen, maxLen, 2, rng, 8000, 1, true);
+    const lens = findCleanPartition(path, topo, K, minLen, maxLen, 2, rng, 8000, straightLimit, !topo.warpGates);
     if (!lens) continue;
+    if (!usesGates(path, lens)) continue;
     const info = analyzeCut(path, topo, lens);
     considerDirty(lens, info, path);
     if (info.touches !== 0 || info.mono2x2 !== 0 || info.adjacentSame !== 0) continue;
-    if (info.straights > 1 || info.borderStraight > 0) continue;
+    if (info.straights > straightLimit || (!topo.warpGates && info.borderStraight > 0)) continue;
     info.score = scoreClean(info);
     cleanPool.push({ lens: lens.slice(), info, path: copyPath(path) });
     if (info.score > bestCleanScore) {
@@ -580,6 +627,7 @@ export function generateLevel(
       backbite(path, topo, rng, Math.floor(total * (1.0 + rng() * 1.0)));
       const lens = findCleanPartition(path, topo, K, minLen, maxLen, 2, rng, 3000, 99, false);
       if (!lens) continue;
+      if (!usesGates(path, lens)) continue;
       const info = analyzeCut(path, topo, lens);
       considerDirty(lens, info, path);
       if (info.touches !== 0 || info.mono2x2 !== 0 || info.adjacentSame !== 0) continue;
@@ -634,6 +682,7 @@ export function generateLevel(
       rows,
       cols,
       warp: topo.warp,
+      warpGates: topo.warpGates,
       pairs: segs.map((sg): [Cell, Cell] => [[sg[0][0], sg[0][1]], [sg[sg.length - 1][0], sg[sg.length - 1][1]]]),
       solution: segs.map((sg) => sg.map((cell): Cell => [cell[0], cell[1]])),
       stats: {
@@ -662,7 +711,7 @@ export function generateLevel(
     });
     if (carved) {
       const info = analyzeCut(carved.solution.flat(), topo, carved.solution.map((sg) => sg.length));
-      if (info.touches === 0 && info.mono2x2 === 0) return mkLevel(carved, info, 'dirty');
+      if (info.touches === 0 && info.mono2x2 === 0 && usesGates(carved.solution.flat(), carved.solution.map(p => p.length))) return mkLevel(carved, info, 'dirty');
     }
     throw new Error(`warp generation failed for seed ${JSON.stringify(String(seedString))} (${rows}x${cols})`);
   }
@@ -682,6 +731,7 @@ export function generateLevel(
     rows,
     cols,
     warp: topo.warp,
+    warpGates: topo.warpGates,
     pairs: [ends],
     solution: [snake.map((cell): Cell => [cell[0], cell[1]])],
     stats: {
@@ -770,7 +820,7 @@ export function validateLevel(level: FlowLevel, topo?: Topology): ValidationResu
     ? hexTopology(level.rows ?? size, level.cols ?? size)
     : level.mask
       ? maskTopology(level.rows ?? size, level.cols ?? size, level.mask, level.walls)
-      : rectTopology(level.rows ?? size, level.cols ?? size, level.warp));
+      : rectTopology(level.rows ?? size, level.cols ?? size, level.warp, level.warpGates));
   const { rows, cols } = t;
   const total = t.total;
   if (!pairs || pairs.length !== numPairs) errors.push(`pairs length ${pairs && pairs.length} != ${numPairs}`);
@@ -824,6 +874,10 @@ export function validateLevel(level: FlowLevel, topo?: Topology): ValidationResu
       for (let c = 0; c < cMax; c++) {
         const r1 = (r + 1) % rows;
         const c1 = (c + 1) % cols;
+        if (t.warpGates && (
+          (r1 === 0 && (!t.warpGates.cols.includes(c) || !t.warpGates.cols.includes(c1))) ||
+          (c1 === 0 && (!t.warpGates.rows.includes(r) || !t.warpGates.rows.includes(r1)))
+        )) continue;
         const a = segGrid[r][c];
         if (a !== -1 && a === segGrid[r1][c] && a === segGrid[r][c1] && a === segGrid[r1][c1]) {
           errors.push(`2x2 mono at ${r},${c} color ${a}`);

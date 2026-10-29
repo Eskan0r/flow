@@ -340,6 +340,10 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
     g: CanvasRenderingContext2D,
     drawFlows: (ctx: CanvasRenderingContext2D) => void,
   ): void {
+    if (this.store.engine.topo.warpGates) {
+      this.drawWarpGates(g, drawFlows);
+      return;
+    }
     const canvas = this.canvasRef()?.nativeElement;
     if (!canvas) return;
     const dpr = Math.min(2.5, window.devicePixelRatio || 1);
@@ -391,6 +395,81 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
     drawFlows(g);
     g.restore();
     this.drawWarpFrame(g, m.w, m.h, m.ox, m.oy, bw, bh);
+  }
+
+  /** Selected Pac-Man passages: only an open cell shows the opposite edge. */
+  private drawWarpGates(g: CanvasRenderingContext2D, drawFlows: (ctx: CanvasRenderingContext2D) => void): void {
+    const canvas = this.canvasRef()?.nativeElement;
+    const e = this.store.engine;
+    const gates = e.topo.warpGates;
+    if (!canvas || !gates) return;
+    const m = this.squareMetrics();
+    const bw = e.cols * m.w, bh = e.rows * m.h;
+    const cc = this.warpGhostLayer(canvas.width, canvas.height);
+    if (!cc) return;
+    const dpr = Math.min(2.5, window.devicePixelRatio || 1);
+    cc.setTransform(dpr, 0, 0, dpr, 0, 0);
+    for (const r of gates.rows) {
+      for (const side of [-1, 1]) {
+        cc.save();
+        cc.beginPath();
+        cc.rect(side < 0 ? 0 : m.ox + bw, m.oy + r * m.h, m.ox, m.h);
+        cc.clip();
+        cc.translate(side * bw, 0);
+        drawFlows(cc);
+        cc.restore();
+      }
+    }
+    for (const c of gates.cols) {
+      for (const side of [-1, 1]) {
+        cc.save();
+        cc.beginPath();
+        cc.rect(m.ox + c * m.w, side < 0 ? 0 : m.oy + bh, m.w, m.oy);
+        cc.clip();
+        cc.translate(0, side * bh);
+        drawFlows(cc);
+        cc.restore();
+      }
+    }
+    this.fadeWarpGhost(cc, this.cssW, this.cssH, m.ox, m.oy);
+    g.drawImage(cc.canvas, 0, 0, cc.canvas.width, cc.canvas.height, 0, 0, this.cssW, this.cssH);
+    g.save();
+    g.beginPath();
+    g.rect(m.ox, m.oy, bw, bh);
+    g.clip();
+    g.fillStyle = '#000';
+    g.fillRect(m.ox, m.oy, bw, bh);
+    this.drawSquareGrid(g, false);
+    drawFlows(g);
+    g.restore();
+
+    g.save();
+    g.lineWidth = 2;
+    g.lineCap = 'butt';
+    // Solid walls, with glowing dashed openings only at actual passages.
+    for (const open of [false, true]) {
+      g.strokeStyle = open ? 'rgba(210,235,255,0.95)' : '#747b84';
+      g.shadowColor = 'rgba(150,190,255,0.8)';
+      g.shadowBlur = open ? 8 : 0;
+      g.setLineDash(open ? [m.w * 0.18, m.w * 0.12] : []);
+      g.beginPath();
+      for (let r = 0; r < e.rows; r++) {
+        if (gates.rows.includes(r) !== open) continue;
+        for (const x of [m.ox, m.ox + bw]) {
+          g.moveTo(x, m.oy + r * m.h);
+          g.lineTo(x, m.oy + (r + 1) * m.h);
+        }
+      }
+      for (let c = 0; c < e.cols; c++) {
+        if (gates.cols.includes(c) !== open) continue;
+        for (const y of [m.oy, m.oy + bh]) {
+          g.moveTo(m.ox + c * m.w, y);
+          g.lineTo(m.ox + (c + 1) * m.w, y);
+        }
+      }
+      g.stroke();
+    }
+    g.restore();
   }
 
   /** Cached offscreen layer for the warp ghost composite (cleared per use). */
@@ -642,6 +721,14 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
     const c = Math.floor((x - offX) / cellW);
     const r = Math.floor((y - offY) / cellH);
     if (wrap && e.topo.warp) {
+      const gates = e.topo.warpGates;
+      if (gates) {
+        const outsideRow = r < 0 || r >= e.rows;
+        const outsideCol = c < 0 || c >= e.cols;
+        if (outsideRow && outsideCol) return null;
+        if (outsideCol && !gates.rows.includes(r)) return null;
+        if (outsideRow && !gates.cols.includes(c)) return null;
+      }
       // A captured drag that leaves the canvas continues on the opposite
       // edge, so the stroke wraps around like the pipes do. Raw coords are
       // clamped to one cell past each edge so a far overshoot can't jump the

@@ -81,7 +81,7 @@ section('pack definitions');
   }
   ok(wallBad === 0, 'walls: >=24 playable, no border walls, walls are blocked and non-empty');
   const warps = PACKS.find((p) => p.id === 'warps');
-  ok(!!warps && warps.kind === 'square' && warps.count === 60, 'warps pack: 60 toroidal levels');
+  ok(!!warps && warps.kind === 'square' && warps.count === 60, 'warps pack: 60 progressively wrapped levels');
   ok(!!warps && warps.warpForLevel && warps.warpForLevel(1) === true, 'warps pack marks every level warped');
   ok(!!warps && warps.sizeForLevel(1) === 5 && warps.sizeForLevel(60) === 7, 'warps pack ramps 5 to 7');
   const chains = PACKS.find((p) => p.id === 'chains');
@@ -107,14 +107,14 @@ section('pack levels generate valid puzzles');
     const warp = p.warpForLevel ? p.warpForLevel(n) : false;
     const K = p.pairsOverride?.[n] ?? (p.pairsForLevel ? p.pairsForLevel(n) : null);
     const lv = generateLevel(p.seedForLevel(n), size, K,
-      { kind: p.kind, rows: shape.rows, cols: shape.cols, mask, walls, warp });
+      { kind: p.kind, rows: shape.rows, cols: shape.cols, mask, walls, warp, warpGates: p.warpGatesForLevel?.(n) });
     if (lv.rows !== shape.rows || lv.cols !== shape.cols) {
       bad++;
       console.error(`  FAIL-SHAPE: ${p.id} #${n}: got ${lv.rows}x${lv.cols}, want ${shape.rows}x${shape.cols}`);
     }
     const v = validateLevel(lv);
     if (!v.ok) { bad++; console.error(`  FAIL: ${p.id} #${n}: ${v.errors.slice(0, 2).join(' | ')}`); }
-    else if (lv.stats.borderStraight > (p.maskForLevel ? 1 : 0) || lv.stats.straights > (p.kind === 'hex' || p.maskForLevel ? 3 : 1) ||
+    else if ((!lv.warpGates && lv.stats.borderStraight > (p.maskForLevel ? 1 : 0)) || lv.stats.straights > (p.kind === 'hex' || p.maskForLevel || lv.warpGates ? 3 : 1) ||
         (lv.stats.tier !== 'clean' && lv.stats.tier !== 'relaxed')) {
       badShape++;
       console.error(`  FAIL-SHAPE: ${p.id} #${n}: straights=${lv.stats.straights} borderStraight=${lv.stats.borderStraight} tier=${lv.stats.tier}`);
@@ -177,13 +177,29 @@ section('warps full sweep');
     const K = p.pairsOverride?.[n] ?? p.pairsForLevel(n);
     let lv;
     try {
-      lv = generateLevel(p.seedForLevel(n), p.sizeForLevel(n), K, { rows, cols, warp: true });
+      lv = generateLevel(p.seedForLevel(n), p.sizeForLevel(n), K, { rows, cols, warp: true, warpGates: p.warpGatesForLevel(n) });
     } catch (err) {
       bad++; console.error(`  THREW: #${n}: ${err && err.message}`); continue;
     }
     const v = validateLevel(lv);
     if (!v.ok) { bad++; console.error(`  INVALID: #${n}: ${v.errors[0]}`); continue; }
     if (!lv.warp) { bad++; console.error(`  LOST WARP: #${n}`); }
+    const gates = lv.warpGates;
+    if (n <= 20) ok(gates?.rows.length === 1 && gates.cols.length === 0, `warp ${n}: one left/right passage`);
+    else if (n <= 25) ok(gates?.rows.length === 0 && gates.cols.length === 1, `warp ${n}: one top/bottom passage`);
+    else if (n <= 40) {
+      const count = n <= 30 ? 1 : n <= 35 ? 2 : 3;
+      ok(gates?.rows.length === count && gates.cols.length === count, `warp ${n}: ${count} passages per axis`);
+    } else ok(!gates, `warp ${n}: fully open edges`);
+    if (gates) {
+      let horizontal = false, vertical = false;
+      for (const path of lv.solution) for (let k = 1; k < path.length; k++) {
+        horizontal ||= Math.abs(path[k][1] - path[k - 1][1]) > 1;
+        vertical ||= Math.abs(path[k][0] - path[k - 1][0]) > 1;
+      }
+      ok(!gates.rows.length || horizontal, `warp ${n}: solution uses horizontal passage`);
+      ok(!gates.cols.length || vertical, `warp ${n}: solution uses vertical passage`);
+    }
   }
   ok(bad === 0, `all 60 warps levels generate valid (bad=${bad})`);
 }
@@ -205,7 +221,7 @@ section('pack levels are all unique');
       let lv;
       try {
         lv = generateLevel(p.seedForLevel(n), size, K,
-          { kind: p.kind, rows: shape.rows, cols: shape.cols, mask, walls, warp });
+          { kind: p.kind, rows: shape.rows, cols: shape.cols, mask, walls, warp, warpGates: p.warpGatesForLevel?.(n) });
       } catch (err) {
         dupes++; console.error(`  THREW: ${p.id} #${n}: ${err && err.message}`); continue;
       }
@@ -252,7 +268,7 @@ section('daily category rotation');
       const a = dailySpec(ds, i);
       const b = dailySpec(ds, i);
       if (a.kind !== b.kind || a.rows !== b.rows || a.cols !== b.cols || a.tag !== b.tag ||
-          !!a.warp !== !!b.warp || !!a.chain !== !!b.chain) wobble++;
+          !!a.warp !== !!b.warp || !!a.chain !== !!b.chain || JSON.stringify(a.warpGates) !== JSON.stringify(b.warpGates)) wobble++;
       for (let r = 0; r < a.rows; r++) {
         for (let c = 0; c < a.cols; c++) {
           if (!!a.mask !== !!b.mask || (a.mask && a.mask(r, c) !== b.mask(r, c))) wobble++;
@@ -288,7 +304,7 @@ section('daily category rotation');
       let lv;
       try {
         lv = generateLevel(`daily-${ds}-${i}`, Math.max(s.rows, s.cols), null,
-          { kind: s.kind, rows: s.rows, cols: s.cols, mask: s.mask, walls: s.walls, warp: !!s.warp });
+          { kind: s.kind, rows: s.rows, cols: s.cols, mask: s.mask, walls: s.walls, warp: !!s.warp, warpGates: s.warpGates });
       } catch (err) {
         bad++; console.error(`  THREW: ${ds} #${i}: ${err && err.message}`); continue;
       }
@@ -298,6 +314,45 @@ section('daily category rotation');
     }
   }
   ok(bad === 0, `70 rotated dailies all valid under their specs (bad=${bad})`);
+}
+
+section('rare daily warps');
+{
+  let days = 0, warps = 0, full = 0, early = 0, multiple = 0;
+  const examples = [];
+  const d = new Date('2027-01-01T12:00:00Z');
+  while (d.getUTCFullYear() < 2037) {
+    const date = d.toISOString().slice(0, 10);
+    let today = 0;
+    for (let i = 1; i <= DAILY_COUNT; i++) {
+      const s = dailySpec(date, i);
+      if (!s.warp) continue;
+      warps++; today++;
+      if (i <= 3) early++;
+      if (!s.warpGates) full++;
+      if (examples.length < 12 || (!s.warpGates && examples.filter(e => !e.spec.warpGates).length < 2)) {
+        examples.push({ date, index: i, spec: s });
+      }
+      if (s.warpGates) {
+        if (JSON.stringify(s.warpGates) !== JSON.stringify(dailySpec(date, i).warpGates)) fail++;
+      }
+    }
+    if (today > 1) multiple++;
+    days++;
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  const rate = warps / (days * DAILY_COUNT), fullShare = full / warps;
+  ok(rate > 0.01 && rate < 0.03, `warp dailies stay near 2% (${(rate * 100).toFixed(2)}%)`);
+  ok(fullShare > 0.02 && fullShare < 0.08, `full wraps stay near 5% of warp dailies (${(fullShare * 100).toFixed(2)}%)`);
+  ok(early === 0 && multiple === 0, 'warps stay in hard slots, at most one per day');
+  let bad = 0;
+  for (const { date, index, spec } of examples) {
+    try {
+      const lv = generateLevel(dailySeed(date, index), Math.max(spec.rows, spec.cols), null, spec);
+      if (!validateLevel(lv).ok || JSON.stringify(lv.warpGates) !== JSON.stringify(spec.warpGates)) bad++;
+    } catch (err) { bad++; console.error(`  THREW: ${date} #${index}: ${err.message}`); }
+  }
+  ok(bad === 0, `${examples.length} rare warp daily examples generate valid boards with the correct passages`);
 }
 
 section('share card');

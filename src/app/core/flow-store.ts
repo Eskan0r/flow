@@ -213,7 +213,7 @@ export class FlowStore {
     const warp = p.warpForLevel ? p.warpForLevel(level) : false;
     const chain = p.chainForLevel ? p.chainForLevel(level) : false;
     const pairCount = p.pairsOverride?.[level] ?? (p.pairsForLevel ? p.pairsForLevel(level) : null);
-    this.engine.loadLevel('seed', 0, p.seedForLevel(level), p.sizeForLevel(level), p.kind, rows, cols, mask, walls, warp, chain, pairCount);
+    this.engine.loadLevel('seed', 0, p.seedForLevel(level), p.sizeForLevel(level), p.kind, rows, cols, mask, walls, warp, chain, pairCount, p.warpGatesForLevel?.(level));
     this.view.set('game');
     this.afterLoad();
     if (announce) this.sound.click();
@@ -287,7 +287,7 @@ export class FlowStore {
     this.engine.loadLevel(
       'seed', 0, sd, Math.max(spec.rows, spec.cols), spec.kind,
       spec.rows, spec.cols, spec.mask ?? null, spec.walls ?? null,
-      spec.warp ?? false, spec.chain ?? false,
+      spec.warp ?? false, spec.chain ?? false, null, spec.warpGates,
     );
     this.view.set('game');
     this.afterLoad();
@@ -351,6 +351,9 @@ export class FlowStore {
   // ---------- progress ----------
 
   private starsKey(packId: string, level: number): string {
+    // The first 40 warp boards now have different rules and puzzles. Keep
+    // their old scores intact, but don't award them to the new progression.
+    if (packId === 'warps' && level <= 40) return `flow.stars.warps.gated.${level}`;
     return `flow.stars.${packId}.${level}`;
   }
 
@@ -647,7 +650,11 @@ export class FlowStore {
     this.size.set(e.size);
     const p = this.pack();
     const dims = `${e.rows} \u00D7 ${e.cols}`;
-    const tag = e.topo.warp ? ' warp' : e.topo.kind === 'hex' ? ' hex' : '';
+    const gates = e.topo.warpGates;
+    const warpCount = gates ? gates.rows.length + gates.cols.length : 0;
+    const tag = e.topo.warp
+      ? gates ? ` · ${warpCount} warp${warpCount === 1 ? '' : 's'}` : ' · full warp'
+      : e.topo.kind === 'hex' ? ' hex' : '';
     const chainTag = e.chain ? ' chain' : '';
     if (p) {
       this.title.set(`${p.name} \u00B7 ${this.packLevel()}`);

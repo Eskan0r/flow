@@ -8,6 +8,12 @@ export type Cell = [number, number];
 /** Per-cell playability predicate (polyomino/wall masks). */
 export type Mask = (r: number, c: number) => boolean;
 
+/** Selected opposite-edge passages; omitted means every edge cell wraps. */
+export interface WarpGates {
+  rows: number[];
+  cols: number[];
+}
+
 export interface Topology {
   kind: BoardKind;
   rows: number;
@@ -22,6 +28,7 @@ export interface Topology {
   walls?: Mask;
   /** Toroidal edges: stepping off one side re-enters the opposite (square only). */
   warp?: boolean;
+  warpGates?: WarpGates;
   key(r: number, c: number): number;
   inBounds(r: number, c: number): boolean;
   /** Orthogonal neighbors, in-bounds and in-shape only, deterministic order. */
@@ -94,19 +101,23 @@ export function maskTopology(rows: number, cols: number, mask: Mask, walls?: Mas
 /** Rectangular square-grid topology (rows x cols). `squareTopology` is the
  *  square special case. Key stride is `cols`, matching hex storage. When
  *  `warp` is set the grid is a torus: edges wrap and distance is toroidal. */
-export function rectTopology(rows: number, cols: number, warp = false): Topology {
+export function rectTopology(rows: number, cols: number, warp = false, warpGates?: WarpGates): Topology {
   // A torus only makes sense from 3x3 up; smaller grids would produce
   // duplicate/self neighbors, so they stay planar.
-  const tor = warp && rows > 2 && cols > 2;
+  const gates = warp && warpGates ? {
+    rows: [...new Set(warpGates.rows.filter(r => Number.isInteger(r) && r >= 0 && r < rows))].sort((a, b) => a - b),
+    cols: [...new Set(warpGates.cols.filter(c => Number.isInteger(c) && c >= 0 && c < cols))].sort((a, b) => a - b),
+  } : undefined;
+  const tor = warp && rows > 2 && cols > 2 && (!gates || gates.rows.length + gates.cols.length > 0);
   const inBounds = (r: number, c: number): boolean => r >= 0 && r < rows && c >= 0 && c < cols;
   const neighbors = (r: number, c: number): Cell[] => {
     if (tor) {
-      return [
-        [(r - 1 + rows) % rows, c],
-        [(r + 1) % rows, c],
-        [r, (c - 1 + cols) % cols],
-        [r, (c + 1) % cols],
-      ];
+      const out: Cell[] = [];
+      if (r > 0 || !gates || gates.cols.includes(c)) out.push([(r - 1 + rows) % rows, c]);
+      if (r < rows - 1 || !gates || gates.cols.includes(c)) out.push([(r + 1) % rows, c]);
+      if (c > 0 || !gates || gates.rows.includes(r)) out.push([r, (c - 1 + cols) % cols]);
+      if (c < cols - 1 || !gates || gates.rows.includes(r)) out.push([r, (c + 1) % cols]);
+      return out;
     }
     const out: Cell[] = [];
     if (r > 0) out.push([r - 1, c]);
@@ -120,6 +131,32 @@ export function rectTopology(rows: number, cols: number, warp = false): Topology
     const dc = Math.abs(c1 - c2);
     return Math.min(dr, rows - dr) + Math.min(dc, cols - dc);
   };
+  // Selective passages need graph distances: unrestricted torus distance
+  // would route a drag (and the generator) toward closed edges. Cache BFS
+  // tables because generation asks about the same destinations repeatedly.
+  const distances = new Map<number, Int16Array>();
+  const distance = (a: Cell, b: Cell): number => {
+    if (!tor) return Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]);
+    if (!gates) return torusDistance(a, b);
+    const target = b[0] * cols + b[1];
+    let ds = distances.get(target);
+    if (!ds) {
+      ds = new Int16Array(rows * cols).fill(-1);
+      ds[target] = 0;
+      const queue = [target];
+      for (let i = 0; i < queue.length; i++) {
+        const k = queue[i];
+        for (const [r, c] of neighbors(Math.floor(k / cols), k % cols)) {
+          const next = r * cols + c;
+          if (ds[next] !== -1) continue;
+          ds[next] = ds[k] + 1;
+          queue.push(next);
+        }
+      }
+      distances.set(target, ds);
+    }
+    return ds[a[0] * cols + a[1]];
+  };
   return {
     kind: 'square',
     rows,
@@ -127,15 +164,18 @@ export function rectTopology(rows: number, cols: number, warp = false): Topology
     total: rows * cols,
     cells: rows * cols,
     warp: tor,
+    warpGates: tor ? gates : undefined,
     key: (r, c) => r * cols + c,
     inBounds,
     neighbors,
-    distance: tor ? torusDistance : ([r1, c1], [r2, c2]) => Math.abs(r1 - r2) + Math.abs(c1 - c2),
-    isBorder: tor ? () => false : ([r, c]) => r === 0 || r === rows - 1 || c === 0 || c === cols - 1,
+    distance,
+    isBorder: tor && !gates ? () => false : ([r, c]) =>
+      ((r === 0 || r === rows - 1) && (!tor || !gates?.cols.includes(c))) ||
+      ((c === 0 || c === cols - 1) && (!tor || !gates?.rows.includes(r))),
     stepOptions: tor
       ? (from, to) => {
-        const d = torusDistance(from, to);
-        return neighbors(from[0], from[1]).filter((nb) => torusDistance(nb, to) < d);
+        const d = distance(from, to);
+        return neighbors(from[0], from[1]).filter((nb) => distance(nb, to) < d);
       }
       : ([r, c], [tr, tc]) => {
         const out: Cell[] = [];

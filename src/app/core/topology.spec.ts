@@ -1,9 +1,36 @@
 /* Topology math specs (mirror of tests/topology.mjs core). Run: ng test */
 import { describe, expect, it } from 'vitest';
-import { hexCellCenter, hexLayout, hexPixelToCell, hexTopology, squareTopology } from './topology';
+import { hexCellCenter, hexLayout, hexPixelToCell, hexTopology, rectTopology, squareTopology } from './topology';
 import { buildSnake } from './flow-generator';
 
 describe('topology', () => {
+  it('only crosses selected warp passages and measures routes around closed edges', () => {
+    const t = rectTopology(5, 5, true, { rows: [2], cols: [] });
+    expect(t.neighbors(2, 0)).toContainEqual([2, 4]);
+    expect(t.neighbors(2, 4)).toContainEqual([2, 0]);
+    expect(t.neighbors(1, 0)).not.toContainEqual([1, 4]);
+    expect(t.neighbors(0, 2)).not.toContainEqual([4, 2]);
+    expect(t.distance([2, 0], [2, 4])).toBe(1);
+    expect(t.distance([1, 0], [1, 4])).toBe(3);
+    expect(t.distance([0, 0], [4, 0])).toBe(4);
+    expect(t.stepOptions([1, 0], [1, 4])).toEqual([[2, 0]]);
+    expect(t.isBorder([1, 0])).toBe(true);
+    expect(t.isBorder([2, 0])).toBe(false);
+  });
+
+  it('supports top/bottom passages and keeps gated graph distances symmetric', () => {
+    const t = rectTopology(6, 6, true, { rows: [1, 4], cols: [2] });
+    expect(t.neighbors(0, 2)).toContainEqual([5, 2]);
+    expect(t.neighbors(0, 3)).not.toContainEqual([5, 3]);
+    for (let r = 0; r < 6; r++) for (let c = 0; c < 6; c++) {
+      for (const nb of t.neighbors(r, c)) {
+        expect(t.neighbors(...nb)).toContainEqual([r, c]);
+        expect(t.distance([r, c], nb)).toBe(1);
+      }
+      expect(t.distance([r, c], [0, 0])).toBe(t.distance([0, 0], [r, c]));
+    }
+    expect(rectTopology(6, 6, true, { rows: [], cols: [] }).warp).toBe(false);
+  });
   it('square neighborhoods and distances', () => {
     const t = squareTopology(6);
     expect(t.neighbors(2, 2)).toHaveLength(4);
