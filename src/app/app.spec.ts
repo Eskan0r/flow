@@ -111,6 +111,80 @@ describe('App', () => {
     expect(store.engine.bridgeAt.size).toBe(0);
   });
 
+  it('resumes both lanes of a bridge daily, including undo history and hint usage', async () => {
+    const { store } = await boot('/?seed=daily-2026-11-03-2&size=9&kind=hex');
+    const e = store.engine;
+    expect(store.pack()).toBeNull();
+    expect(store.isDaily()).toBe(true);
+    expect(e.size).toBe(5);
+    expect(e.seed).toBe('daily-2026-11-03-2');
+    expect(e.bridges).toHaveLength(1);
+    const b = e.bridges[0].cell;
+    const crossing = ['h', 'v'].map(axis => e.solution.findIndex(p => p.some((c, i) => c[0] === b[0] && c[1] === b[1] && bridgeAxis(p, i) === axis)));
+    for (const ci of crossing) drawCells(e, e.solution[ci]);
+    store.refresh();
+    const expected = e.snapshot(), depth = e.history.length;
+    const reloaded = TestBed.runInInjectionContext(() => new FlowStore());
+    reloaded.boot();
+    expect(reloaded.engine.snapshot()).toEqual(expected);
+    expect(reloaded.engine.history.length).toBe(depth);
+    expect(reloaded.engine.occupantAt(...b, 'h')).toBe(crossing[0]);
+    expect(reloaded.engine.occupantAt(...b, 'v')).toBe(crossing[1]);
+    reloaded.undo();
+    expect(reloaded.engine.moves).toBe(expected.moves);
+    expect(reloaded.engine.occupantAt(...b, 'h')).toBe(crossing[0]);
+    expect(reloaded.engine.occupantAt(...b, 'v')).toBe(-1);
+    reloaded.hint(); reloaded.undo();
+    expect(reloaded.engine.hints).toBe(1);
+    reloaded.showDailies();
+    reloaded.daily(2, '2026-11-03');
+    expect(reloaded.engine.hints).toBe(1);
+  });
+
+  it('resumes an unfinished stroke ending on a bridge lane', async () => {
+    const { store } = await boot('/?seed=daily-2026-11-03-2');
+    const b = store.engine.bridges[0].cell;
+    const path = store.engine.solution.find(p => p.some(c => c[0] === b[0] && c[1] === b[1]))!;
+    const index = path.findIndex(c => c[0] === b[0] && c[1] === b[1]);
+    store.engine.pointerDown(...path[0], 1);
+    for (const c of path.slice(1, index + 1)) store.engine.pointerMove(...c, 1);
+    store.ensureClock();
+    document.dispatchEvent(new Event('visibilitychange'));
+    const snapshot = store.engine.snapshot();
+    const reloaded = TestBed.runInInjectionContext(() => new FlowStore());
+    reloaded.boot();
+    expect(reloaded.engine.snapshot()).toEqual(snapshot);
+    expect(reloaded.engine.active).toBeNull();
+    expect(reloaded.engine.pointerDown(...b, 2, bridgeAxis(path, index))).toBe('stroke');
+    for (const c of path.slice(index + 1)) reloaded.engine.pointerMove(...c, 2);
+    reloaded.engine.pointerUp(2);
+    expect(reloaded.engine.connectedCount()).toBe(1);
+  });
+
+  it('records bridge daily completion, shares its time, and enforces one-shot play', async () => {
+    const { fixture, store } = await boot('/?seed=daily-2026-11-03-2');
+    const date = '2026-11-03';
+    localStorage.setItem('flow.daily.done', JSON.stringify([1, 3, 4, 5].map(i => `${date}-${i}`)));
+    let expectedTotal = 0;
+    for (const i of [1, 3, 4, 5]) {
+      const spec = dailySpec(date, i);
+      localStorage.setItem(`flow.best.daily-${date}-${i}.s${spec.rows}x${spec.cols}`, JSON.stringify({ t: i, m: 5 }));
+      expectedTotal += i;
+    }
+    for (const path of store.engine.solution) drawCells(store.engine, path);
+    store.refresh(); fixture.detectChanges();
+    expect(store.engine.win?.perfect).toBe(true);
+    expect(store.dailyStars(date, 2)).toBe(3);
+    expect(store.dailyDoneOn(date)).toEqual([1, 2, 3, 4, 5]);
+    expect(store.dailyTotalTime(date)).toBe(expectedTotal);
+    expect(store.shareText(date)).toContain('⭐');
+    expect(document.querySelector('[data-testid=replay-btn]')).toBeNull();
+    store.undo();
+    expect(store.engine.won).toBe(true);
+    store.daily(2, date);
+    expect(store.view()).toBe('dailies');
+  });
+
   it('loads the introductory warp route and only accepts outside input at its passage', async () => {
     const { fixture, store } = await boot('/?pack=warps&level=1');
     const canvas = boardCanvas();

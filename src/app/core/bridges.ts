@@ -26,6 +26,31 @@ export function bridgeLevel(n: number): BridgeLevel {
   };
 }
 
+/** Date-seeded rotation, reflection and color order of a validated board. */
+export function dailyBridgeLevel(n: number, seed: string): BridgeLevel {
+  const level = bridgeLevel(n), size = level.size;
+  let state = 2166136261;
+  for (const char of seed) state = Math.imul(state ^ char.charCodeAt(0), 16777619);
+  const roll = () => { state = (Math.imul(state, 1664525) + 1013904223) >>> 0; return state >>> 8; };
+  const rotation = roll() % 4, mirror = roll() % 2 !== 0;
+  const transform = (cell: Cell): Cell => {
+    let [r, c] = cell;
+    for (let i = 0; i < rotation; i++) [r, c] = [c, size - 1 - r];
+    return [r, mirror ? size - 1 - c : c];
+  };
+  const solution = level.solution.map(path => path.map(transform));
+  for (let i = solution.length - 1; i > 0; i--) {
+    const j = roll() % (i + 1);
+    [solution[i], solution[j]] = [solution[j], solution[i]];
+  }
+  for (const path of solution) if (roll() % 2) path.reverse();
+  return {
+    ...level, seed, solution,
+    pairs: solution.map(path => [path[0], path[path.length - 1]]),
+    bridges: level.bridges.map(b => ({ cell: transform(b.cell), over: rotation % 2 ? (b.over === 'h' ? 'v' : 'h') : b.over })),
+  };
+}
+
 /** Independent validation for the shipped boards and completed bridge games. */
 export function validateBridgeLevel(level: BridgeLevel): ValidationResult {
   const errors: string[] = [];

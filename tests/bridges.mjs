@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { bridgeLevel, bridgeAxis, validateBridgeLevel } from '../src/app/core/bridges.ts';
+import { bridgeLevel, bridgeAxis, dailyBridgeLevel, validateBridgeLevel } from '../src/app/core/bridges.ts';
 import { FlowEngine } from '../src/app/core/flow-engine.ts';
 import { pathHasShortcut } from '../src/app/core/flow-rules.ts';
 import { rectTopology } from '../src/app/core/topology.ts';
+import { dailySpec, dailySeed } from '../src/app/core/packs.ts';
 
 const same = (a, b) => a[0] === b[0] && a[1] === b[1];
 function draw(e, path, pid = 1) {
@@ -98,4 +99,31 @@ for (const order of [['h', 'v'], ['v', 'h']]) {
   assert.equal(validateBridgeLevel(turned).ok, false, 'turning bridge solution rejected');
 }
 
-console.log('ALL BRIDGE CHECKS PASSED: 60 boards, both draw orders, both lane orientations, cuts, undo, hints and invalid solutions.');
+{
+  let count = 0;
+  const slots = new Set(), sizes = new Set();
+  for (const d = new Date('2027-01-01T12:00:00Z'); d.getUTCFullYear() === 2027; d.setUTCDate(d.getUTCDate() + 1)) {
+    const date = d.toISOString().slice(0, 10);
+    for (let i = 1; i <= 5; i++) {
+      const spec = dailySpec(date, i);
+      if (spec.bridgeLevel === undefined) continue;
+      const seed = dailySeed(date, i), level = dailyBridgeLevel(spec.bridgeLevel, seed);
+      assert.equal(spec.tag, 'Bridges');
+      assert.equal(!!spec.warp || !!spec.chain, false);
+      assert.equal(level.rows, spec.rows); assert.equal(level.cols, spec.cols);
+      assert.equal(validateBridgeLevel(level).ok, true, `daily ${date}-${i}`);
+      assert.deepEqual(level, dailyBridgeLevel(spec.bridgeLevel, seed), 'daily board deterministic');
+      const e = new FlowEngine(); e.loadBridgeLevel(level);
+      for (const path of level.solution) draw(e, path);
+      assert.equal(e.won, true); assert.equal(e.win.perfect, true);
+      assert.equal(e.seed, seed);
+      count++; slots.add(i); sizes.add(level.size);
+    }
+  }
+  assert.deepEqual([...slots].sort(), [1, 2, 3, 4, 5]);
+  assert.deepEqual([...sizes].sort(), [5, 6, 7]);
+  assert.ok(count > 0);
+  console.log(`BRIDGE DAILIES: ${count} date-seeded boards checked across all slots and sizes.`);
+}
+
+console.log('ALL BRIDGE CHECKS PASSED: 60 boards, daily rotation, both draw orders, both lane orientations, cuts, undo, hints and invalid solutions.');

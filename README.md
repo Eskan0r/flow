@@ -96,6 +96,12 @@ slots 4–5 and at most once a day. Most use one or two passages per active
 axis; roughly 5% of those warp dailies have fully wrapped edges (about
 0.1% of all dailies). Earlier daily boards keep their published rules.
 
+Bridges also joins the daily rotation starting October 30, 2026. Early
+slots use 5×5 boards with one bridge, the middle slot uses 6×6 boards with
+two, and hard slots use 7×7 boards with three or four. The date selects a
+validated board, rotation, reflection and color order. Bridge dailies keep
+the same saved-attempt, hint, undo, one-shot completion and sharing rules.
+
 `src/app/core/flow-generator.ts` (framework-free, also exercised by `npm test`):
 
 1. Hamiltonian **snake** covers the board.

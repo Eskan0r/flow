@@ -11,7 +11,8 @@ import { FlowEngine, randomSeed, type EngineSnapshot } from './flow-engine';
 import { DAILY_COUNT, PACKS, dailyLabel, dailySeed, dailyShareCard, dailySpec, packById, parseDailySeed, type DailyMark, type Pack } from './packs';
 import { Sound } from './sound';
 import type { BoardKind, Cell } from './topology';
-import { pathHasShortcut } from './flow-rules';
+import { pathAxis, pathHasShortcut } from './flow-rules';
+import { dailyBridgeLevel } from './bridges';
 
 export interface Best {
   t: number;
@@ -292,7 +293,8 @@ export class FlowStore {
     this.seedInput.set(sd);
     this.pack.set(null);
     this.kind.set(spec.kind);
-    this.engine.loadLevel(
+    if (spec.bridgeLevel !== undefined) this.engine.loadBridgeLevel(dailyBridgeLevel(spec.bridgeLevel, sd));
+    else this.engine.loadLevel(
       'seed', 0, sd, Math.max(spec.rows, spec.cols), spec.kind,
       spec.rows, spec.cols, spec.mask ?? null, spec.walls ?? null,
       spec.warp ?? false, spec.chain ?? false, null, spec.warpGates,
@@ -582,7 +584,7 @@ export class FlowStore {
     try {
       localStorage.setItem(`flow.attempt.${this.engine.seed}`, JSON.stringify({
         version: 1,
-        board: JSON.stringify(this.engine.pairs),
+        board: JSON.stringify(this.engine.bridges.length ? [this.engine.pairs, this.engine.bridges] : this.engine.pairs),
         state: this.engine.snapshot(),
         history: this.engine.history,
         elapsed,
@@ -598,7 +600,8 @@ export class FlowStore {
       const raw = localStorage.getItem(`flow.attempt.${this.engine.seed}`);
       if (!raw) return;
       const saved = JSON.parse(raw);
-      if (saved.version !== 1 || saved.board !== JSON.stringify(this.engine.pairs)
+      const board = JSON.stringify(this.engine.bridges.length ? [this.engine.pairs, this.engine.bridges] : this.engine.pairs);
+      if (saved.version !== 1 || saved.board !== board
         || !this.validSnapshot(saved.state) || !Array.isArray(saved.history)
         || saved.history.length > 200 || !saved.history.every((s: unknown) => this.validSnapshot(s))
         || !Number.isFinite(saved.elapsed) || saved.elapsed < 0
@@ -631,20 +634,27 @@ export class FlowStore {
     const seen = new Set<number>();
     return s.paths.every((path, ci) => {
       if (!Array.isArray(path) || path.length > e.topo.cells) return false;
+      if (!path.every(cell => Array.isArray(cell) && cell.length === 2 && cell.every(Number.isInteger) && e.inBounds(...cell))) return false;
+      const cells = new Set<number>();
       return path.every((cell, i) => {
-        if (!Array.isArray(cell) || cell.length !== 2 || !cell.every(Number.isInteger)) return false;
         const [r, c] = cell;
-        if (!e.inBounds(r, c)) return false;
         const key = e.key(r, c);
+        const bridge = e.bridgeAt.has(key);
+        const slot = key + (bridge && pathAxis(path, i) === 'v' ? e.topo.total : 0);
         const dot = e.epOf.get(key);
-        if (seen.has(key) || (dot !== undefined && (dot !== ci || (i !== 0 && i !== path.length - 1)))
+        if (seen.has(slot) || cells.has(key) || (dot !== undefined && (dot !== ci || (i !== 0 && i !== path.length - 1)))
           || (i === 0 && dot !== ci)) return false;
         if (i > 0) {
           const prev = path[i - 1];
           if (!e.topo.neighbors(prev[0], prev[1]).some(([rr, cc]) => rr === r && cc === c)
             || e.edgeWalled(prev, cell)) return false;
         }
-        seen.add(key);
+        if (bridge && i > 0 && i < path.length - 1) {
+          const prev = path[i - 1], next = path[i + 1];
+          if (prev[0] + next[0] !== 2 * r || prev[1] + next[1] !== 2 * c) return false;
+        }
+        seen.add(slot);
+        cells.add(key);
         return true;
       });
     });
@@ -913,7 +923,7 @@ export class FlowStore {
   private bestKeyFor(seed: string, rows: number, cols: number): string {
     const e = this.engine;
     // Daily geometry is canonical. Preserve existing daily and classic keys.
-    if (seed === e.seed && e.bridges.length) return `flow.best.${seed}.s${rows}x${cols}.bridges.clean`;
+    if (seed === e.seed && e.bridges.length && !parseDailySeed(seed)) return `flow.best.${seed}.s${rows}x${cols}.bridges.clean`;
     const variant = parseDailySeed(seed) || (e.topo.kind === 'square' && !e.warp && !e.chain)
       ? '' : `.${e.topo.kind}.w${Number(e.warp)}.c${Number(e.chain)}`;
     return `flow.best.${seed}.s${rows}x${cols}${variant}`;

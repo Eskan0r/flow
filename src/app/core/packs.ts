@@ -264,11 +264,13 @@ export interface DailySpec {
   warp?: boolean;
   warpGates?: WarpGates;
   chain?: boolean;
-  /** Menu tag: 'Warp' | 'Chain' | 'Rect' | 'Odd' | 'Walls' | 'Hex' | ''. */
+  /** Source board in the validated Bridges bank; daily seed controls its presentation. */
+  bridgeLevel?: number;
+  /** Displayed category, e.g. 'Bridges', 'Warp', 'Chain', or ''. */
   tag: string;
 }
 
-type DailyCat = 'square' | 'hex' | 'chains' | 'rect' | 'odd' | 'walls' | 'warps';
+type DailyCat = 'square' | 'hex' | 'chains' | 'rect' | 'odd' | 'walls' | 'warps' | 'bridges';
 // Warps stay in the hard slots (4-5) only; everything else rotates anywhere.
 const DAILY_EASY: DailyCat[] = ['square', 'hex', 'chains', 'rect'];
 const DAILY_MID: DailyCat[] = [...DAILY_EASY, 'odd', 'walls'];
@@ -278,6 +280,9 @@ const DAILY_HARD: DailyCat[] = [...DAILY_MID, 'warps'];
 // tomorrow's set, about one day in ten gets one warp in a hard slot (~2%
 // of all dailies). Only one in twenty of those uses fully open edges.
 export const DAILY_WARP_ROTATION_START = '2026-10-30';
+export const DAILY_BRIDGE_ROTATION_START = '2026-10-30';
+const DAILY_BRIDGE_EASY: DailyCat[] = [...DAILY_EASY, 'bridges'];
+const DAILY_BRIDGE_MID: DailyCat[] = [...DAILY_MID, 'bridges'];
 
 function dailyRoll(key: string): number {
   let h = hashStr(key);
@@ -302,17 +307,29 @@ function dailyWarpGates(date: string, size: number): WarpGates {
 export function dailySpec(dateStr: string, index: number): DailySpec {
   const i = Math.min(Math.max(1, index), DAILY_COUNT);
   const size = DAILY_SIZES[i - 1];
-  const pool = i <= 2 ? DAILY_EASY : i === 3 ? DAILY_MID : DAILY_HARD;
+  const withBridges = dateStr >= DAILY_BRIDGE_ROTATION_START;
+  const easy = withBridges ? DAILY_BRIDGE_EASY : DAILY_EASY;
+  const mid = withBridges ? DAILY_BRIDGE_MID : DAILY_MID;
+  const pool = i <= 2 ? easy : i === 3 ? mid : DAILY_HARD;
   const h = hashStr(`${dateStr}:${i}`);
   const rareWarps = dateStr >= DAILY_WARP_ROTATION_START;
   let category = pool[h % pool.length];
   if (rareWarps && i >= 4) {
-    category = DAILY_MID[h % DAILY_MID.length];
+    category = mid[h % mid.length];
     if (dailyRoll(`${dateStr}:warp-day`) % 10 === 0 && i === 4 + dailyRoll(`${dateStr}:warp-slot`) % 2) {
       category = 'warps';
     }
   }
   switch (category) {
+    case 'bridges': {
+      const boardSize = Math.min(7, size);
+      const first = boardSize === 5 ? 1 : boardSize === 6 ? 21 : 41;
+      return {
+        kind: 'square', rows: boardSize, cols: boardSize,
+        bridgeLevel: first + dailyRoll(`${dateStr}:${i}:bridge-board`) % 20,
+        tag: 'Bridges',
+      };
+    }
     case 'hex':
       return { kind: 'hex', rows: size, cols: size, tag: 'Hex' };
     case 'chains':
