@@ -3,6 +3,7 @@
 
 import type { BoardKind, Mask, WarpGates } from './topology';
 import { defaultPairsForSize } from './flow-generator';
+import { bridgeLevel, type BridgeLevel } from './bridges';
 
 export interface Pack {
   id: string;
@@ -30,6 +31,7 @@ export interface Pack {
    *  earlier level's layout (verified: every pack is duplicate-free). */
   pairsOverride?: { [level: number]: number };
   seedForLevel(n: number): string;
+  bridgeLevelForLevel?(n: number): BridgeLevel;
 }
 
 function band(n: number, bands: Array<[number, number]>): number {
@@ -207,6 +209,17 @@ export const PACKS: Pack[] = [
     seedForLevel: (n) => n <= 40 ? `flow-warps-gated-${n}` : `flow-warps-${n}`,
     warpForLevel: () => true,
     warpGatesForLevel,
+  }),
+  uniformPack({
+    id: 'bridges',
+    name: 'Bridges',
+    desc: 'Cross over and under, 5x5 to 7x7',
+    color: '#94a3b8',
+    kind: 'square',
+    count: 60,
+    sizeForLevel: n => n <= 20 ? 5 : n <= 40 ? 6 : 7,
+    seedForLevel: n => `flow-bridges-${n}`,
+    bridgeLevelForLevel: bridgeLevel,
   }),
   uniformPack({
     id: 'chains',

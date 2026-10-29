@@ -11,6 +11,8 @@ import type { Cell } from './core/flow-generator';
 import { FlowStore } from './core/flow-store';
 import { flowChainPath } from './core/flow-generator';
 import { PACKS, dailySpec } from './core/packs';
+import { bridgeLevel, bridgeAxis } from './core/bridges';
+import { pathHasShortcut } from './core/flow-rules';
 
 function cellXY(r: number, c: number, size: number, side = 400): [number, number] {
   const cell = side / size;
@@ -59,6 +61,54 @@ describe('App', () => {
     for (const p of PACKS) {
       expect(document.body.textContent).toContain(p.name);
     }
+  });
+
+  it('selects either pipe at a bridge crossing with real pointer input', async () => {
+    const { fixture, store } = await boot('/?pack=bridges&level=1');
+    const e = store.engine, b = e.bridges[0].cell;
+    const color = (axis: 'h' | 'v') => e.solution.findIndex(p => p.some((cell, i) => cell[0] === b[0] && cell[1] === b[1] && bridgeAxis(p, i) === axis));
+    const h = color('h'), v = color('v');
+    drawCells(e, e.solution[h]); drawCells(e, e.solution[v]);
+    store.refresh(); fixture.detectChanges();
+    const canvas = boardCanvas(), cell = 400 / e.size;
+    pointer(canvas, 'pointerdown', (b[1] + .5) * cell, (b[0] + .85) * cell);
+    expect(e.active?.color).toBe(v);
+    pointer(canvas, 'pointerup', (b[1] + .5) * cell, (b[0] + .85) * cell);
+    store.undo();
+    pointer(canvas, 'pointerdown', (b[1] + .85) * cell, (b[0] + .5) * cell);
+    expect(e.active?.color).toBe(h);
+    pointer(canvas, 'pointerup', (b[1] + .85) * cell, (b[0] + .5) * cell);
+  });
+
+  it('wins a bridge level, saves progress, replays, advances and resolves its seed', async () => {
+    const { fixture, store } = await boot('/?pack=bridges&level=1');
+    const canvas = boardCanvas(), level = bridgeLevel(1);
+    for (const path of level.solution) {
+      for (let i = 0; i < path.length; i++) {
+        const [x, y] = cellXY(...path[i], level.size);
+        pointer(canvas, i === 0 ? 'pointerdown' : 'pointermove', x, y);
+      }
+      const last = path.at(-1)!;
+      pointer(canvas, 'pointerup', ...cellXY(...last, level.size));
+    }
+    fixture.detectChanges();
+    expect(store.engine.won).toBe(true);
+    expect(store.engine.win?.perfect).toBe(true);
+    expect(store.starsFor('bridges', 1)).toBe(3);
+    expect(document.querySelector('[data-testid=win-dialog]')).toBeTruthy();
+    store.replay();
+    expect(store.engine.bridges).toEqual(level.bridges);
+    expect(store.engine.moves).toBe(0);
+    store.next();
+    expect(store.packLevel()).toBe(2);
+    expect(store.engine.bridges).toEqual(bridgeLevel(2).bridges);
+    store.playCustom('flow-bridges-1', 9, 'hex');
+    expect(store.pack()?.id).toBe('bridges');
+    expect(store.engine.bridges).toEqual(level.bridges);
+    expect(store.engine.size).toBe(5);
+    store.playCustom('ordinary-after-bridges', 5, 'square');
+    expect(store.engine.bridges).toHaveLength(0);
+    expect(store.engine.bridgeAt.size).toBe(0);
   });
 
   it('loads the introductory warp route and only accepts outside input at its passage', async () => {
@@ -210,6 +260,42 @@ describe('App', () => {
     expect(() => reloaded.boot()).not.toThrow();
     expect(reloaded.engine.moves).toBe(0);
     expect(reloaded.engine.paths.every((p) => p.length === 0)).toBe(true);
+  });
+
+  it('removes an old padded daily pipe without refunding moves, hints or time', async () => {
+    const { store } = await boot('/?seed=daily-2026-10-01-1');
+    const e = store.engine;
+    const findLoop = (route: Cell[]): Cell[] | null => {
+      if (pathHasShortcut(route, e.topo)) return route;
+      if (route.length >= 7) return null;
+      for (const next of e.topo.neighbors(...route.at(-1)!)) {
+        if (e.epOf.has(e.key(...next)) || route.some(c => c[0] === next[0] && c[1] === next[1])) continue;
+        const found = findLoop([...route, next]);
+        if (found) return found;
+      }
+      return null;
+    };
+    let loop: Cell[] | null = null, color = 0;
+    for (; color < e.numPairs; color++) {
+      loop = findLoop([e.pairs[color][0]]);
+      if (loop) break;
+    }
+    expect(loop).toBeTruthy();
+    const saved = JSON.parse(localStorage.getItem(`flow.attempt.${e.seed}`)!);
+    saved.state.paths[color] = loop;
+    saved.state.moves = 9;
+    saved.state.hints = 2;
+    saved.elapsed = 17;
+    saved.running = false;
+    saved.history = [structuredClone(saved.state)];
+    localStorage.setItem(`flow.attempt.${e.seed}`, JSON.stringify(saved));
+    const reloaded = TestBed.runInInjectionContext(() => new FlowStore());
+    reloaded.boot();
+    expect(reloaded.engine.paths[color]).toEqual([]);
+    expect(reloaded.engine.moves).toBe(9);
+    expect(reloaded.engine.hints).toBe(2);
+    expect(reloaded.engine.history).toEqual([]);
+    expect(reloaded.time()).toBe('0:17');
   });
 
   it('pauses daily time in menus and preserves elapsed time for a winning hint', async () => {

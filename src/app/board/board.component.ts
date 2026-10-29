@@ -17,6 +17,8 @@ import {
 import { FlowStore } from '../core/flow-store';
 import { hexCellCenter, hexCornerOffsets, hexLayout, hexPixelToCell } from '../core/topology';
 import type { Cell, HexLayout } from '../core/topology';
+import type { BridgeAxis } from '../core/bridges';
+import { BRIDGE_ARTWORK, traceBridgeArtwork } from './bridge-artwork';
 
 const PALETTE = [
   '#ff2222', '#7ac943', '#29a8ff', '#ffe135', '#ff8c00', '#b04df0',
@@ -178,7 +180,7 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
       else if (!e.topo.warp) this.drawSquareGrid(g);
       const m = this.squareMetrics();
       const cell = Math.min(m.w, m.h);
-      pipeW = cell * 0.62;
+      pipeW = cell * BRIDGE_ARTWORK.pipeRatio;
       dotR = cell * 0.31;
       edge = 3;
     }
@@ -239,7 +241,88 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
     } else {
       drawFlows(g);
     }
+    if (e.bridges.length) this.drawBridges(g, pipeW, dotR, edge);
     if (e.chain) this.drawChainWalls(g);
+  }
+
+  private drawBridges(g: CanvasRenderingContext2D, pipeW: number, dotR: number, edge: number): void {
+    const e = this.store.engine, m = this.squareMetrics();
+    for (const bridge of e.bridges) {
+      const [r, c] = bridge.cell;
+      const [x, y] = this.center(r, c);
+      g.save();
+      g.beginPath();
+      g.rect(x - m.w / 2, y - m.h / 2, m.w, m.h);
+      g.clip();
+      g.fillStyle = '#000';
+      g.fillRect(x - m.w / 2, y - m.h / 2, m.w, m.h);
+      const paintLane = (axis: BridgeAxis): void => {
+        const ci = e.occupantAt(r, c, axis);
+        if (ci < 0) return;
+        const path = e.paths[ci], index = path.findIndex(cell => cell[0] === r && cell[1] === c);
+        const points = path.slice(Math.max(0, index - 1), index + 2).map(cell => this.center(...cell));
+        if (points.length < 2) return;
+        g.lineCap = 'round'; g.lineJoin = 'round';
+        for (const [width, color] of [[pipeW + edge, 'rgba(0,0,0,0.55)'], [pipeW, PALETTE[ci % PALETTE.length]]] as const) {
+          g.lineWidth = width; g.strokeStyle = color;
+          g.beginPath(); g.moveTo(...points[0]);
+          for (const point of points.slice(1)) g.lineTo(...point);
+          g.stroke();
+        }
+      };
+      paintLane(bridge.over === 'h' ? 'v' : 'h');
+      // The raised lane arches over the crossing, matching the asset's
+      // white contours. Fill it dynamically so every pipe keeps its color.
+      const upper = e.occupantAt(r, c, bridge.over);
+      const transformArtwork = (): void => {
+        g.translate(x, y);
+        if (bridge.over === 'v') g.rotate(Math.PI / 2);
+        g.scale(m.w / BRIDGE_ARTWORK.size, m.h / BRIDGE_ARTWORK.size);
+        g.translate(-BRIDGE_ARTWORK.size / 2, -BRIDGE_ARTWORK.size / 2);
+      };
+      if (upper >= 0) {
+        const path = e.paths[upper], index = path.findIndex(cell => cell[0] === r && cell[1] === c);
+        g.save();
+        if (index > 0 && index === path.length - 1) {
+          const previous = path[index - 1];
+          const fromStart = bridge.over === 'h' ? previous[1] < c : previous[0] < r;
+          g.beginPath();
+          g.rect(bridge.over === 'h' && !fromStart ? x : x - m.w / 2,
+            bridge.over === 'v' && !fromStart ? y : y - m.h / 2,
+            bridge.over === 'h' ? m.w / 2 : m.w, bridge.over === 'v' ? m.h / 2 : m.h);
+          g.clip();
+        }
+        transformArtwork();
+        traceBridgeArtwork(g, 'fill'); g.fillStyle = PALETTE[upper % PALETTE.length]; g.fill();
+        g.restore();
+      }
+      g.save(); transformArtwork();
+      traceBridgeArtwork(g, 'outline');
+      g.strokeStyle = '#fff'; g.lineWidth = BRIDGE_ARTWORK.strokeWidth;
+      g.lineCap = 'round'; g.lineJoin = 'round'; g.stroke();
+      g.restore();
+      if (e.active?.last[0] === r && e.active.last[1] === c) {
+        const raised = e.active.color === upper;
+        const rise = BRIDGE_ARTWORK.apexRise / BRIDGE_ARTWORK.size;
+        g.beginPath(); g.arc(x + (raised && bridge.over === 'v' ? m.w * rise : 0),
+          y - (raised && bridge.over === 'h' ? m.h * rise : 0), dotR * .45, 0, Math.PI * 2); g.fillStyle = '#fff'; g.fill();
+      }
+      g.restore();
+    }
+  }
+
+  /** Tap the exposed arm of a crossing to select that lane; center selects the deck. */
+  private evLane(ev: PointerEvent, cell: Cell): BridgeAxis | undefined {
+    const e = this.store.engine, bridge = e.bridgeAt.get(e.key(...cell));
+    const canvas = this.canvasRef()?.nativeElement;
+    if (!bridge || !canvas) return undefined;
+    const rect = canvas.getBoundingClientRect();
+    const [x, y] = this.center(...cell);
+    const dx = Math.abs((ev.clientX - rect.left) * this.cssW / rect.width - x);
+    const dy = Math.abs((ev.clientY - rect.top) * this.cssH / rect.height - y);
+    const m = this.squareMetrics();
+    if (Math.max(dx / m.w, dy / m.h) < .14) return e.occupantAt(...cell, bridge.over) >= 0 ? bridge.over : undefined;
+    return dx / m.w >= dy / m.h ? 'h' : 'v';
   }
 
   /** Chain tunnels: color-to-color bridges between the canonical link dots
@@ -758,7 +841,7 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
     }
     // Run input outside Angular: canvas redraws are manual, signals update on release.
     this.zone.runOutsideAngular(() => {
-      e.pointerDown(cell[0], cell[1], ev.pointerId);
+      e.pointerDown(cell[0], cell[1], ev.pointerId, this.evLane(ev, cell));
     });
     if (this.store.engine.active?.changed) this.store.ensureClock();
     this.store.checkpointDaily();
@@ -805,7 +888,7 @@ export class BoardComponent implements AfterViewInit, OnDestroy {
     const cell = this.evCell(ev as PointerEvent);
     if (!cell) return;
     const e = this.store.engine;
-    const ci = e.grid[e.key(cell[0], cell[1])];
+    const ci = e.occupantAt(...cell, this.evLane(ev as PointerEvent, cell));
     if (ci >= 0 && e.clearColor(ci)) {
       this.store.ensureClock();
       this.store.refresh();

@@ -6,6 +6,8 @@ import { defaultHexPairs, defaultPairsForSize, flowChainPath, generateLevel, val
 import type { Cell, GeneratedLevel } from './flow-generator';
 import { hexTopology, maskTopology, rectTopology, squareTopology } from './topology';
 import type { BoardKind, Mask, Topology, WarpGates } from './topology';
+import { bridgeAxis, validateBridgeLevel, type Bridge, type BridgeAxis, type BridgeLevel } from './bridges';
+import { pathHasShortcut } from './flow-rules';
 
 export type PlayMode = 'level' | 'seed';
 
@@ -102,6 +104,10 @@ export class FlowEngine {
   paths: Cell[][] = [];
   done: boolean[] = [];
   grid: number[] = [];
+  bridges: Bridge[] = [];
+  readonly bridgeAt = new Map<number, Bridge>();
+  private bridgeH: number[] = [];
+  private bridgeV: number[] = [];
   epOf = new Map<number, number>();
   epSet = new Set<number>();
 
@@ -133,6 +139,8 @@ export class FlowEngine {
   }
 
   loadLevel(mode: PlayMode, levelNum = 1, seed = '', size = 7, kind: BoardKind = 'square', rows = 0, cols = 0, mask: Mask | null = null, walls: Mask | null = null, warp = false, chain = false, pairCount: number | null = null, warpGates?: WarpGates): void {
+    this.bridges = [];
+    this.bridgeAt.clear();
     this.mode = mode;
     if (mode === 'level') {
       this.levelNum = levelNum;
@@ -238,6 +246,61 @@ export class FlowEngine {
     this.events = [];
   }
 
+  /** Shipped bridge boards load directly; no generation work on the UI thread. */
+  loadBridgeLevel(level: BridgeLevel): void {
+    const validation = validateBridgeLevel(level);
+    if (!validation.ok) throw new Error(`Invalid bridge board: ${validation.errors.join(', ')}`);
+    this.mode = 'seed';
+    this.levelNum = 0;
+    this.seed = level.seed;
+    this.size = level.size;
+    this.rows = level.rows ?? level.size;
+    this.cols = level.cols ?? level.size;
+    this.topo = rectTopology(this.rows, this.cols);
+    this.mask = this.walls = undefined;
+    this.warp = this.chain = false;
+    this.chainWalls = [];
+    this.chainLinks = [];
+    this.bridges = level.bridges.map(b => ({ cell: [...b.cell] as Cell, over: b.over }));
+    this.bridgeAt.clear();
+    for (const bridge of this.bridges) this.bridgeAt.set(this.key(...bridge.cell), bridge);
+    this.pairs = level.pairs.map(([a, b]) => [[...a] as Cell, [...b] as Cell]);
+    this.solution = level.solution.map(p => p.map(cell => [...cell] as Cell));
+    this.numPairs = level.numPairs;
+    this.paths = this.pairs.map(() => []);
+    this.done = this.pairs.map(() => false);
+    this.grid = new Array(this.topo.total).fill(-1);
+    this.epOf = new Map();
+    this.epSet = new Set();
+    this.pairs.forEach((pair, ci) => pair.forEach(cell => {
+      const k = this.key(...cell);
+      this.epOf.set(k, ci); this.epSet.add(k);
+    }));
+    this.moves = this.hints = 0;
+    this.lastCounted = null;
+    this.won = false;
+    this.win = null;
+    this.history = [];
+    this.active = null;
+    this.events = [];
+    this.rebuild();
+  }
+
+  occupantAt(r: number, c: number, lane?: BridgeAxis): number {
+    const k = this.key(r, c), bridge = this.bridgeAt.get(k);
+    if (!bridge) return this.grid[k];
+    if (lane) return (lane === 'h' ? this.bridgeH : this.bridgeV)[k] ?? -1;
+    const upper = (bridge.over === 'h' ? this.bridgeH : this.bridgeV)[k];
+    return upper >= 0 ? upper : (bridge.over === 'h' ? this.bridgeV : this.bridgeH)[k] ?? -1;
+  }
+
+  private slotKey(path: Cell[], index: number): number {
+    const k = this.key(...path[index]);
+    return k + (this.bridgeAt.has(k) && bridgeAxis(path, index) === 'v' ? this.topo.total : 0);
+  }
+
+  get fillTarget(): number { return this.topo.cells + this.bridges.length; }
+
   /** True when a chain funnel wall blocks movement between two cells. */
   edgeWalled(a: Cell, b: Cell): boolean {
     return this.chainWalls.some(([x, y]) =>
@@ -260,13 +323,22 @@ export class FlowEngine {
 
   rebuild(): void {
     this.grid.fill(-1);
+    if (this.bridges.length) {
+      this.bridgeH = new Array(this.topo.total).fill(-1);
+      this.bridgeV = new Array(this.topo.total).fill(-1);
+    }
     this.pairs.forEach(([a, b], ci) => {
       this.grid[this.key(a[0], a[1])] = ci;
       this.grid[this.key(b[0], b[1])] = ci;
     });
     this.paths.forEach((p, ci) => {
-      for (const [r, c] of p) this.grid[this.key(r, c)] = ci;
+      p.forEach(([r, c], index) => {
+        const k = this.key(r, c);
+        if (this.bridgeAt.has(k)) (bridgeAxis(p, index) === 'h' ? this.bridgeH : this.bridgeV)[k] = ci;
+        else this.grid[k] = ci;
+      });
     });
+    for (const [k, bridge] of this.bridgeAt) this.grid[k] = this.occupantAt(...bridge.cell);
     this.pairs.forEach(([a, b], ci) => {
       const p = this.paths[ci];
       const was = this.done[ci];
@@ -283,12 +355,17 @@ export class FlowEngine {
 
   filledCount(): number {
     let n = 0;
-    for (const v of this.grid) if (v !== -1) n++;
+    this.grid.forEach((v, k) => {
+      if (this.bridgeAt.has(k)) {
+        if (this.bridgeH[k] >= 0) n++;
+        if (this.bridgeV[k] >= 0) n++;
+      } else if (v !== -1) n++;
+    });
     return n;
   }
 
   filledPct(): number {
-    return Math.round((this.filledCount() / this.topo.cells) * 100);
+    return Math.round((this.filledCount() / this.fillTarget) * 100);
   }
 
   connectedCount(): number {
@@ -361,7 +438,7 @@ export class FlowEngine {
   }
 
   /** Pointer pressed on a cell. Returns 'stroke' when a stroke started. */
-  pointerDown(r: number, c: number, pid: number): 'stroke' | 'none' {
+  pointerDown(r: number, c: number, pid: number, lane?: BridgeAxis): 'stroke' | 'none' {
     if (this.won || this.active || !this.inBounds(r, c)) return 'none';
     const k = this.key(r, c);
     const epColor = this.epOf.get(k);
@@ -369,7 +446,7 @@ export class FlowEngine {
       this.startStroke(epColor, [r, c], pid);
       return 'stroke';
     }
-    const occupant = this.grid[k];
+    const occupant = this.occupantAt(r, c, lane);
     if (occupant >= 0) {
       const p = this.paths[occupant];
       const idx = p.findIndex(([pr, pc]) => pr === r && pc === c);
@@ -442,6 +519,7 @@ export class FlowEngine {
     // cell is still taken on the final step, so deliberate cuts keep working.
     const out: Cell[] = [];
     let cur: Cell = from.slice() as Cell;
+    let previous = this.paths[color][this.paths[color].length - 2];
     const guard = this.topo.total + 8;
     const isFree = (rr: number, cc: number): boolean => {
       if (!this.inBounds(rr, cc)) return false;
@@ -450,11 +528,12 @@ export class FlowEngine {
       if (this.paths[color].some(([pr, pc]) => pr === rr && pc === cc)) return true;
       const epc = this.epOf.get(k);
       if (epc !== undefined) return epc === color;
-      return this.grid[k] === -1;
+      return this.occupantAt(rr, cc, rr === cur[0] ? 'h' : 'v') === -1;
     };
     for (let g = 0; g < guard; g++) {
       if (cur[0] === to[0] && cur[1] === to[1]) break;
-      const opts = this.topo.stepOptions(cur, to);
+      const lane: BridgeAxis | null = this.bridgeAt.has(this.key(...cur)) && previous ? (previous[0] === cur[0] ? 'h' : 'v') : null;
+      const opts = this.topo.stepOptions(cur, to).filter(o => !lane || (o[0] === cur[0] ? 'h' : 'v') === lane);
       if (opts.length === 0) break;
       let next: Cell | null = null;
       for (const o of opts) {
@@ -464,6 +543,7 @@ export class FlowEngine {
         }
       }
       if (!next) next = opts[0];
+      previous = cur;
       cur = next;
       out.push([cur[0], cur[1]]);
     }
@@ -477,8 +557,11 @@ export class FlowEngine {
     const path = this.paths[color];
     const head = path[path.length - 1];
     if (!head) return false;
+    const lane: BridgeAxis = r === head[0] ? 'h' : 'v';
+    if (this.bridgeAt.has(this.key(...head)) && bridgeAxis(path, path.length - 1) !== lane) return false;
 
     const existingIdx = path.findIndex(([pr, pc]) => pr === r && pc === c);
+    if (existingIdx >= 0 && this.bridgeAt.has(this.key(r, c)) && bridgeAxis(path, existingIdx) !== lane) return false;
     if (existingIdx >= 0) {
       if (path.length - 1 > existingIdx) {
         this.markChanged(color);
@@ -529,7 +612,18 @@ export class FlowEngine {
     // Connected flows are capped at their dot: stepping back along the pipe
     // stays live (handled above), but pushing past the endpoint is refused.
     if (this.done[color]) return false;
-    const occ = this.grid[this.key(r, c)];
+    const proposed = [...path, s];
+    // An untouched matching dot also belongs to this flow: once the head
+    // reaches its neighborhood, wandering away would leave an unavoidable
+    // shortcut at that dot. Only connecting or backtracking stays legal.
+    const pair = this.pairs[color];
+    const finish = pair?.find((dot, i) => eq(pair[1 - i], path[0]));
+    if (finish && !eq(s, finish)) proposed.push(finish);
+    if (pathHasShortcut(proposed, this.topo, this.bridgeAt)) {
+      this.events.push('blocked');
+      return false;
+    }
+    const occ = this.occupantAt(r, c, lane);
     if (occ === -1 || epc === color) {
       this.markChanged(color);
       path.push([r, c]);
@@ -637,10 +731,10 @@ export class FlowEngine {
     const ci = open[0];
     this.pushHistory();
     const want = this.solution[ci];
-    const wantSet = new Set(want.map(([r, c]) => this.key(r, c)));
+    const wantSet = new Set(want.map((_, index) => this.slotKey(want, index)));
     this.paths.forEach((p, oi) => {
       if (oi === ci) return;
-      const cut = p.findIndex(([r, c]) => wantSet.has(this.key(r, c)) && !this.epSet.has(this.key(r, c)));
+      const cut = p.findIndex(([r, c], index) => wantSet.has(this.slotKey(p, index)) && !this.epSet.has(this.key(r, c)));
       if (cut >= 0) this.paths[oi] = p.slice(0, Math.max(0, cut));
     });
     this.paths[ci] = want.map((cell) => cell.slice() as Cell);
@@ -655,7 +749,12 @@ export class FlowEngine {
   checkWin(): boolean {
     if (this.won) return true;
     if (!this.done.every(Boolean)) return false;
-    if (this.filledCount() !== this.topo.cells) return false;
+    if (this.filledCount() !== this.fillTarget) return false;
+    if (this.paths.some(path => pathHasShortcut(path, this.topo, this.bridgeAt))) return false;
+    if (this.bridges.length && !validateBridgeLevel({
+      seed: this.seed, size: this.size, rows: this.rows, cols: this.cols,
+      numPairs: this.numPairs, pairs: this.pairs, solution: this.paths, bridges: this.bridges,
+    }).ok) return false;
     this.won = true;
     // Chain boards are one-stroke puzzles: perfect demands the single move.
     const perfect = (this.chain ? this.moves <= 1 : this.moves <= this.numPairs) && this.hints === 0;

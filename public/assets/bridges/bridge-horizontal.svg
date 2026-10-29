@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 128 128" fill="none">
+  <title>Horizontal bridge</title>
+  <desc>White outlined arch spanning the full underlying pipe. Transparent background and center.</desc>
+  <path d="M8 24.32L16 24.32C17 24.32 18.5 22.07 20 20.32C36 1.65333 92 1.65333 108 20.32C109.5 22.07 111 24.32 112 24.32L120 24.32M8 103.68L16 103.68C17 103.68 18.5 101.43 20 99.68C36 81.01333 92 81.01333 108 99.68C109.5 101.43 111 103.68 112 103.68L120 103.68" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

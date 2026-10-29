@@ -12,6 +12,7 @@ before — every puzzle solvable by construction.
 - **Packs** — Daily Puzzles (5 fresh boards a day, sizes 5-5-6-7-8 with
   hexes mixed in, streak for full clears), Regular Pack (150), Bonus Pack
   (150), Hexes (60 hexagonal-tile levels),
+  Bridges (60 levels introducing one, two, then three or four crossings),
   each with done / total progress, plus free play.
 - **Levels** — numbered grid per pack; finished levels keep their stars.
 - **Game** — the board fills the viewport; controls dock in a side rail on
@@ -34,8 +35,8 @@ npx --yes serve dist/flow-web/browser
 ## Test it
 
 ```sh
-npm test             # five framework-free node suites, plain node:
-                     #   topology → generator/validate → hex → engine → packs
+npm test             # six framework-free node suites, plain node:
+                     #   topology → generator/validate → hex → engine → bridges → packs
 npm run test:unit    # vitest: engine specs + full AppComponent play-through to a win dialog
 ```
 
@@ -59,6 +60,29 @@ hint / new / seed / daily / right-click clear. Stable selectors live on
 `data-testid` attributes.
 
 ## How levels work
+
+The Bridges pack has 60 precomputed, validated square boards: levels 1–20
+are 5×5 with one bridge; 21–40 are 6×6 with two; 41–50 are 7×7 with three;
+51–60 are 7×7 with four. Each crossing has independent horizontal and vertical
+lanes. Pipes go straight through a bridge; filling both lanes with different
+colors is required for a win. Drawing or hinting one lane preserves the
+perpendicular pipe. Tap an exposed arm of a crossing to grab its pipe; the
+center selects the raised pipe. Right-click uses the same lane selection.
+
+Original white arched bridge assets are in `public/assets/bridges/`, with
+horizontal and vertical SVGs plus transparent PNGs at 256 and 512 pixels.
+The pipe colors are drawn dynamically beneath the white outlines.
+
+Across every mode, matching endpoints must be nonadjacent (including across
+open warp seams), and a pipe cannot pad its length by touching an earlier,
+nonconsecutive part of itself. Such moves are refused while drawing and
+cannot win. Bridge lanes are checked independently. The bridge pack is
+generated with the same rule, so its published solutions contain no such
+loops. Regenerated bridge boards use fresh progress and best-score keys.
+
+`npm run generate:bridges` regenerates and validates the deterministic pack
+offline using a graph with two separate vertices at each bridge. Shipped
+boards include their solutions for hints, so playing does not run a search.
 
 The Warps pack introduces one left/right passage in levels 1–20, one
 top/bottom passage in 21–25, one passage on each axis in 26–30, two on each

@@ -14,7 +14,7 @@ function section(t) { console.log('\n== ' + t + ' =='); }
 
 section('pack definitions');
 {
-  ok(PACKS.length === 8, `regular, bonus, hexes, rectangles, oddshapes, walls, warps, chains packs (got ${PACKS.length})`);
+  ok(PACKS.length === 9, `nine packs including bridges (got ${PACKS.length})`);
   const ids = PACKS.map((p) => p.id);
   ok(new Set(ids).size === ids.length, 'pack ids unique');
   for (const p of PACKS) {
@@ -106,7 +106,7 @@ section('pack levels generate valid puzzles');
     const walls = p.wallsForLevel ? p.wallsForLevel(n) : undefined;
     const warp = p.warpForLevel ? p.warpForLevel(n) : false;
     const K = p.pairsOverride?.[n] ?? (p.pairsForLevel ? p.pairsForLevel(n) : null);
-    const lv = generateLevel(p.seedForLevel(n), size, K,
+    const lv = p.bridgeLevelForLevel?.(n) ?? generateLevel(p.seedForLevel(n), size, K,
       { kind: p.kind, rows: shape.rows, cols: shape.cols, mask, walls, warp, warpGates: p.warpGatesForLevel?.(n) });
     if (lv.rows !== shape.rows || lv.cols !== shape.cols) {
       bad++;
@@ -114,6 +114,7 @@ section('pack levels generate valid puzzles');
     }
     const v = validateLevel(lv);
     if (!v.ok) { bad++; console.error(`  FAIL: ${p.id} #${n}: ${v.errors.slice(0, 2).join(' | ')}`); }
+    else if (lv.bridges) cleanCount++;
     else if ((!lv.warpGates && lv.stats.borderStraight > (p.maskForLevel ? 1 : 0)) || lv.stats.straights > (p.kind === 'hex' || p.maskForLevel || lv.warpGates ? 3 : 1) ||
         (lv.stats.tier !== 'clean' && lv.stats.tier !== 'relaxed')) {
       badShape++;
@@ -220,12 +221,16 @@ section('pack levels are all unique');
       const K = p.pairsOverride?.[n] ?? (p.pairsForLevel ? p.pairsForLevel(n) : null);
       let lv;
       try {
-        lv = generateLevel(p.seedForLevel(n), size, K,
+        lv = p.bridgeLevelForLevel?.(n) ?? generateLevel(p.seedForLevel(n), size, K,
           { kind: p.kind, rows: shape.rows, cols: shape.cols, mask, walls, warp, warpGates: p.warpGatesForLevel?.(n) });
       } catch (err) {
         dupes++; console.error(`  THREW: ${p.id} #${n}: ${err && err.message}`); continue;
       }
-      const k = JSON.stringify(lv.pairs);
+      const k = JSON.stringify(lv.bridges ? [lv.pairs, lv.bridges] : lv.pairs);
+      const validity = validateLevel(lv);
+      if (!validity.ok) {
+        dupes++; console.error(`  INVALID QUALITY: ${p.id} #${n}: ${validity.errors[0]}`); continue;
+      }
       if (seen.has(k)) { dupes++; console.error(`  DUPE: ${p.id} #${n}`); }
       else seen.add(k);
     }

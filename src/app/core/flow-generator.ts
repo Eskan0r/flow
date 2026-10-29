@@ -9,6 +9,7 @@ export type Cell = [number, number];
 import { hexTopology, maskTopology, rectTopology } from './topology';
 import type { BoardKind, Mask, Topology, WarpGates } from './topology';
 import { carveLevel } from './carve';
+import { validateBridgeLevel, type Bridge } from './bridges';
 
 export interface FlowLevel {
   seed: string;
@@ -26,6 +27,7 @@ export interface FlowLevel {
   /** Toroidal edges (square boards only). */
   warp?: boolean;
   warpGates?: WarpGates;
+  bridges?: Bridge[];
 }
 
 export interface LevelStats {
@@ -814,6 +816,7 @@ export function flowChainPath(pairs: [Cell, Cell][], topo: Topology): ChainResul
 /** Validate a level object. Topology defaults from the level itself
  *  (square unless kind/rows/cols say hex). */
 export function validateLevel(level: FlowLevel, topo?: Topology): ValidationResult {
+  if (level.bridges) return validateBridgeLevel({ ...level, bridges: level.bridges });
   const errors: string[] = [];
   const { size, numPairs, pairs, solution } = level;
   const t = topo ?? (level.kind === 'hex'

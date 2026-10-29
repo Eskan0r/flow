@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import type { Cell } from './flow-generator';
 import { FlowEngine } from './flow-engine';
 import { PACKS } from './packs';
+import { pathHasShortcut } from './flow-rules';
+import { hexTopology, rectTopology } from './topology';
 
 function drawPath(e: FlowEngine, cells: Cell[], pid = 1): boolean {
   e.pointerDown(cells[0][0], cells[0][1], pid);
@@ -11,6 +13,45 @@ function drawPath(e: FlowEngine, cells: Cell[], pid = 1): boolean {
 }
 
 describe('FlowEngine', () => {
+  it('refuses the extra-square yellow loop during drawing', () => {
+    const e = new FlowEngine();
+    e.loadLevel('level', 1);
+    e.pairs = [[[4, 0], [0, 4]]];
+    e.numPairs = 1; e.paths = [[]]; e.done = [false];
+    e.epOf = new Map([[e.key(4, 0), 0], [e.key(0, 4), 0]]);
+    e.epSet = new Set(e.epOf.keys()); e.rebuild();
+    const route: Cell[] = [[4, 0], [3, 0], [3, 1], [3, 2], [4, 2]];
+    e.pointerDown(4, 0, 1);
+    for (const cell of route.slice(1)) e.pointerMove(...cell, 1);
+    expect(e.paths[0]).toEqual(route);
+    e.pointerMove(4, 1, 1);
+    expect(e.paths[0]).toEqual(route);
+    expect(e.active?.last).toEqual([4, 2]);
+    expect(e.drainEvents()).toContain('blocked');
+    e.pointerMove(3, 2, 1);
+    expect(e.paths[0]).toEqual(route.slice(0, -1));
+    e.cancelStroke(1); e.reset();
+    const approach: Cell[] = [[4, 0], [4, 1], [4, 2], [4, 3], [4, 4], [3, 4], [2, 4], [1, 4]];
+    e.pointerDown(4, 0, 1);
+    for (const cell of approach.slice(1)) e.pointerMove(...cell, 1);
+    e.pointerMove(1, 3, 1);
+    expect(e.paths[0]).toEqual(approach);
+    e.pointerMove(0, 4, 1);
+    expect(e.done[0]).toBe(true);
+  });
+
+  it('finds padding across warp seams, within hexes, and only along connected bridge lanes', () => {
+    const loop: Cell[] = [[2, 0], [1, 0], [1, 4], [2, 4]];
+    expect(pathHasShortcut(loop, rectTopology(5, 5, true))).toBe(true);
+    expect(pathHasShortcut(loop, rectTopology(5, 5, true, { rows: [1], cols: [] }))).toBe(false);
+    const hex = hexTopology(5, 5), a: Cell = [2, 2], b = hex.neighbors(...a)[0];
+    const c = hex.neighbors(...b).find(cell => hex.neighbors(...a).some(nb => nb[0] === cell[0] && nb[1] === cell[1]))!;
+    expect(pathHasShortcut([a, b, c], hex)).toBe(true);
+    const alongside: Cell[] = [[2, 0], [2, 1], [2, 2], [2, 3], [1, 3], [1, 2]];
+    const topo = rectTopology(5, 5);
+    expect(pathHasShortcut(alongside, topo)).toBe(true);
+    expect(pathHasShortcut(alongside, topo, new Set([topo.key(2, 2)]))).toBe(false);
+  });
   it('plays every gated warp board to a perfect win and rejects closed seams', () => {
     const pack = PACKS.find(p => p.id === 'warps')!;
     for (let n = 1; n <= 40; n++) {

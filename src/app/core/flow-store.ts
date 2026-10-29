@@ -10,7 +10,8 @@ import { WinDialogComponent, type WinDialogContext } from '../win-dialog/win-dia
 import { FlowEngine, randomSeed, type EngineSnapshot } from './flow-engine';
 import { DAILY_COUNT, PACKS, dailyLabel, dailySeed, dailyShareCard, dailySpec, packById, parseDailySeed, type DailyMark, type Pack } from './packs';
 import { Sound } from './sound';
-import type { BoardKind } from './topology';
+import type { BoardKind, Cell } from './topology';
+import { pathHasShortcut } from './flow-rules';
 
 export interface Best {
   t: number;
@@ -213,7 +214,8 @@ export class FlowStore {
     const warp = p.warpForLevel ? p.warpForLevel(level) : false;
     const chain = p.chainForLevel ? p.chainForLevel(level) : false;
     const pairCount = p.pairsOverride?.[level] ?? (p.pairsForLevel ? p.pairsForLevel(level) : null);
-    this.engine.loadLevel('seed', 0, p.seedForLevel(level), p.sizeForLevel(level), p.kind, rows, cols, mask, walls, warp, chain, pairCount, p.warpGatesForLevel?.(level));
+    if (p.bridgeLevelForLevel) this.engine.loadBridgeLevel(p.bridgeLevelForLevel(level));
+    else this.engine.loadLevel('seed', 0, p.seedForLevel(level), p.sizeForLevel(level), p.kind, rows, cols, mask, walls, warp, chain, pairCount, p.warpGatesForLevel?.(level));
     this.view.set('game');
     this.afterLoad();
     if (announce) this.sound.click();
@@ -227,6 +229,12 @@ export class FlowStore {
   }
 
   loadSeed(seed: string, size: number, kind?: BoardKind, rows = 0, cols = 0, warp = false, chain = false): void {
+    const bridgeRoute = /^flow-bridges-(\d+)$/.exec(seed);
+    const bridgePack = packById('bridges');
+    if (bridgeRoute && bridgePack && +bridgeRoute[1] >= 1 && +bridgeRoute[1] <= bridgePack.count) {
+      this.playPackLevel(bridgePack, +bridgeRoute[1], false);
+      return;
+    }
     const daily = parseDailySeed(seed);
     if (daily) {
       this.daily(daily.index, daily.date);
@@ -351,6 +359,7 @@ export class FlowStore {
   // ---------- progress ----------
 
   private starsKey(packId: string, level: number): string {
+    if (packId === 'bridges') return `flow.stars.bridges.clean.${level}`;
     // The first 40 warp boards now have different rules and puzzles. Keep
     // their old scores intact, but don't award them to the new progression.
     if (packId === 'warps' && level <= 40) return `flow.stars.warps.gated.${level}`;
@@ -594,6 +603,14 @@ export class FlowStore {
         || saved.history.length > 200 || !saved.history.every((s: unknown) => this.validSnapshot(s))
         || !Number.isFinite(saved.elapsed) || saved.elapsed < 0
         || !Number.isFinite(saved.savedAt)) return;
+      // Older clients allowed padded paths. Clear only those pipes while
+      // retaining spent moves, hints and time; never bring them back by undo.
+      const shortcut = (path: Cell[]) => pathHasShortcut(path, this.engine.topo, this.engine.bridgeAt);
+      if (saved.state.paths.some(shortcut)) {
+        saved.state.paths = saved.state.paths.map((path: Cell[]) => shortcut(path) ? [] : path);
+        saved.state.lastCounted = null;
+        saved.history = [];
+      } else saved.history = saved.history.filter((snap: EngineSnapshot) => !snap.paths.some(shortcut));
       this.engine.restore(saved.state);
       this.engine.history = saved.history;
       this.engine.drainEvents();
@@ -655,7 +672,7 @@ export class FlowStore {
     const tag = e.topo.warp
       ? gates ? ` · ${warpCount} warp${warpCount === 1 ? '' : 's'}` : ' · full warp'
       : e.topo.kind === 'hex' ? ' hex' : '';
-    const chainTag = e.chain ? ' chain' : '';
+    const chainTag = e.chain ? ' chain' : e.bridges.length ? ` · ${e.bridges.length} bridge${e.bridges.length === 1 ? '' : 's'}` : '';
     if (p) {
       this.title.set(`${p.name} \u00B7 ${this.packLevel()}`);
       this.subtitle.set(`${dims}${tag}${chainTag} \u00B7 ${e.numPairs} colors`);
@@ -896,6 +913,7 @@ export class FlowStore {
   private bestKeyFor(seed: string, rows: number, cols: number): string {
     const e = this.engine;
     // Daily geometry is canonical. Preserve existing daily and classic keys.
+    if (seed === e.seed && e.bridges.length) return `flow.best.${seed}.s${rows}x${cols}.bridges.clean`;
     const variant = parseDailySeed(seed) || (e.topo.kind === 'square' && !e.warp && !e.chain)
       ? '' : `.${e.topo.kind}.w${Number(e.warp)}.c${Number(e.chain)}`;
     return `flow.best.${seed}.s${rows}x${cols}${variant}`;
